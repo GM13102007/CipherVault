@@ -23,7 +23,10 @@ import {
   Share2,
   Info,
   ShieldAlert,
-  Terminal
+  Terminal,
+  Eye,
+  ExternalLink,
+  X
 } from 'lucide-react';
 import { 
   doc, 
@@ -104,6 +107,66 @@ function AdminDashboard({ onPrune }: { onPrune: () => Promise<void> }) {
   );
 }
 
+// --- Helper Components ---
+
+function PreviewModal({ file, onClose }: { file: { url: string; name: string; type: string }; onClose: () => void }) {
+  const isImage = file.type.startsWith('image/');
+  const isVideo = file.type.startsWith('video/');
+  const isPdf = file.type === 'application/pdf';
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm"
+    >
+      <div className="relative w-full max-w-4xl max-h-[90vh] flex flex-col items-center">
+        <div className="absolute -top-12 right-0 flex items-center gap-4">
+          <a 
+            href={file.url} 
+            download={file.name}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-mono text-[10px] uppercase tracking-widest transition-all"
+          >
+            <Download className="w-3 h-3" />
+            Download
+          </a>
+          <button 
+            onClick={onClose}
+            className="p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="w-full h-full bg-black/40 rounded-2xl border border-white/5 overflow-hidden flex items-center justify-center technical-border">
+          {isImage ? (
+            <img src={file.url} alt={file.name} className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+          ) : isVideo ? (
+            <video src={file.url} controls className="max-w-full max-h-full" />
+          ) : isPdf ? (
+            <iframe src={file.url} className="w-full h-full min-h-[70vh] border-none" />
+          ) : (
+            <div className="p-12 text-center">
+              <FileText className="w-16 h-16 text-slate-700 mx-auto mb-4" />
+              <p className="text-sm font-mono text-slate-500 uppercase tracking-widest">Preview not supported for this file type.</p>
+              <p className="text-[10px] text-slate-600 mt-2">Please use the download option instead.</p>
+            </div>
+          )}
+        </div>
+        
+        <div className="mt-4 flex flex-col items-center gap-1">
+          <p className="text-xs font-mono font-bold text-white tracking-widest uppercase truncate max-w-full px-4">{file.name}</p>
+          <div className="flex items-center gap-2 text-[8px] font-mono text-slate-500 uppercase tracking-tighter">
+            <Shield className="w-3 h-3 text-blue-500/50" />
+            Decrypted Zero-Knowledge Stream
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 function Countdown({ expiresAt }: { expiresAt: any }) {
   const [timeLeft, setTimeLeft] = useState<string>('...');
 
@@ -162,7 +225,8 @@ export default function App() {
   // Download State
   const [targetShare, setTargetShare] = useState<ShareData | null>(null);
   const [isDecrypting, setIsDecrypting] = useState(false);
-  const [decryptedFile, setDecryptedFile] = useState<{ url: string; name: string } | null>(null);
+  const [decryptedFile, setDecryptedFile] = useState<{ url: string; name: string; type: string } | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
 
   // --- Maintenance Rules ---
@@ -396,8 +460,8 @@ export default function App() {
     }
   };
 
-  const handleDownload = async () => {
-    if (!targetShare || !secretKey) return;
+  const processSecureFile = async (): Promise<{ url: string; name: string; type: string } | null> => {
+    if (!targetShare || !secretKey) return null;
 
     try {
       setIsDecrypting(true);
@@ -412,7 +476,6 @@ export default function App() {
 
       setCurrentPhase("Reassembling file...");
       
-      // Join chunks
       let totalLength = 0;
       const arrayBuffers = chunksData.map(c => {
         const buf = base64ToArrayBuffer(c.data);
@@ -435,22 +498,37 @@ export default function App() {
         secretKey
       );
 
-      const blob = new Blob([decryptedBuffer], { type: targetShare.mimeType });
+      const type = targetShare.mimeType || 'application/octet-stream';
+      const blob = new Blob([decryptedBuffer], { type });
       const url = URL.createObjectURL(blob);
+      const fileInfo = { url, name: targetShare.fileName, type };
       
-      setDecryptedFile({ url, name: targetShare.fileName });
-      
-      // Automatic download
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = targetShare.fileName;
-      a.click();
+      setDecryptedFile(fileInfo);
+      return fileInfo;
     } catch (err) {
       console.error(err);
       setError('Decryption failed. The secret key might be invalid or storage is corrupt.');
+      return null;
     } finally {
       setIsDecrypting(false);
       setCurrentPhase(null);
+    }
+  };
+
+  const handleDownload = async () => {
+    const file = await processSecureFile();
+    if (file) {
+      const a = document.createElement('a');
+      a.href = file.url;
+      a.download = file.name;
+      a.click();
+    }
+  };
+
+  const handlePreview = async () => {
+    const file = await processSecureFile();
+    if (file) {
+      setShowPreview(true);
     }
   };
 
@@ -910,25 +988,37 @@ export default function App() {
                     </div>
                   </div>
 
-                  <button
-                    disabled={isDecrypting}
-                    onClick={handleDownload}
-                    className={`w-full relative py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-mono font-bold uppercase tracking-wider text-xs transition-all flex items-center justify-center gap-2 disabled:opacity-50
-                      ${isDecrypting ? 'shadow-[0_0_20px_rgba(59,130,246,0.25)]' : 'shadow-lg'}
-                    `}
-                  >
-                    {isDecrypting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Decrypting...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4" />
-                        Decrypt & Open
-                      </>
-                    )}
-                  </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      disabled={isDecrypting}
+                      onClick={handleDownload}
+                      className={`relative py-4 bg-white/5 hover:bg-white/10 text-white rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] transition-all flex items-center justify-center gap-2 disabled:opacity-50 border border-white/10
+                        ${isDecrypting ? 'shadow-[0_0_20px_rgba(59,130,246,0.1)]' : ''}
+                      `}
+                    >
+                      {isDecrypting ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Download className="w-3 h-3" />
+                      )}
+                      Decrypt & Download
+                    </button>
+
+                    <button
+                      disabled={isDecrypting}
+                      onClick={handlePreview}
+                      className={`relative py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg
+                        ${isDecrypting ? 'shadow-[0_0_20px_rgba(59,130,246,0.25)]' : 'shadow-lg shadow-blue-500/10'}
+                      `}
+                    >
+                      {isDecrypting ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Eye className="w-3 h-3" />
+                      )}
+                      Decrypt & View
+                    </button>
+                  </div>
 
                   <div className="p-4 bg-blue-500/5 rounded-lg border border-blue-500/10 flex items-start gap-3">
                     <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
@@ -941,6 +1031,15 @@ export default function App() {
             </motion.div>
           )}
 
+        </AnimatePresence>
+        
+        <AnimatePresence>
+          {showPreview && decryptedFile && (
+            <PreviewModal 
+              file={decryptedFile} 
+              onClose={() => setShowPreview(false)} 
+            />
+          )}
         </AnimatePresence>
         
         {/* Footer info */}

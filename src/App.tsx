@@ -167,7 +167,7 @@ function PreviewModal({ file, onClose }: { file: { url: string; name: string; ty
   );
 }
 
-function Countdown({ expiresAt }: { expiresAt: any }) {
+function Countdown({ expiresAt, onExpire }: { expiresAt: any; onExpire?: () => void }) {
   const [timeLeft, setTimeLeft] = useState<string>('...');
 
   useEffect(() => {
@@ -179,6 +179,7 @@ function Countdown({ expiresAt }: { expiresAt: any }) {
       
       if (diff <= 0) {
         setTimeLeft('EXPIRED');
+        if (onExpire) onExpire();
         return;
       }
 
@@ -197,7 +198,7 @@ function Countdown({ expiresAt }: { expiresAt: any }) {
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
-  }, [expiresAt]);
+  }, [expiresAt, onExpire]);
 
   return <span>{timeLeft}</span>;
 }
@@ -463,8 +464,24 @@ export default function App() {
   const processSecureFile = async (): Promise<{ url: string; name: string; type: string } | null> => {
     if (!targetShare || !secretKey) return null;
 
+    // Real-time Expiry Verification (Prevents access if tab remains open)
+    const expiresAt = targetShare.expiresAt instanceof Timestamp ? targetShare.expiresAt.toDate() : new Date(targetShare.expiresAt);
+    if (expiresAt < new Date()) {
+      setError('Access Denied: This secure link has reached its expiration limit and self-destructed.');
+      setTargetShare(null);
+      return null;
+    }
+
     try {
       setIsDecrypting(true);
+      setCurrentPhase("Verifying link integrity...");
+      
+      // Double check server-side meta existence
+      const docSnap = await getDoc(doc(db, 'shares', targetShare.id));
+      if (!docSnap.exists()) {
+        throw new Error("Secure vault not found. It may have been purged or deleted.");
+      }
+
       setCurrentPhase("Downloading encrypted packets...");
       
       const chunksSnap = await getDocs(collection(db, 'shares', targetShare.id, 'chunks'));
@@ -982,7 +999,13 @@ export default function App() {
                         <span>•</span>
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3 text-blue-500/50" />
-                          <Countdown expiresAt={targetShare.expiresAt} />
+                          <Countdown 
+                            expiresAt={targetShare.expiresAt} 
+                            onExpire={() => {
+                              setError('This secure share has expired and self-destructed.');
+                              setTargetShare(null);
+                            }}
+                          />
                         </span>
                       </div>
                     </div>

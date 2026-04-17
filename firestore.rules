@@ -59,7 +59,7 @@ service cloud.firestore {
       allow list: if isAdmin();
 
       match /chunks/{chunkId} {
-        allow get, list: if true;
+        allow get, list: if get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt > request.time;
         allow create: if true;
         allow delete: if isAdmin() || 
                         (isAuthenticated() && 'ownerId' in get(/databases/$(database)/documents/shares/$(shareId)).data && get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid) ||

@@ -245,6 +245,22 @@ export default function App() {
 
   // --- Actions ---
 
+  const handleSignIn = async () => {
+    try {
+      setError(null);
+      await signIn();
+    } catch (err: any) {
+      console.error("Sign-in failed:", err);
+      if (err.code === 'auth/unauthorized-domain') {
+        setError("Domain Unauthorized: Please add your Netlify URL to the 'Authorized Domains' list in Firebase Console.");
+      } else if (err.code === 'auth/popup-blocked') {
+        setError("Popup Blocked: Please enable popups for this site to sign in.");
+      } else {
+        setError(err.message || "An error occurred during sign-in.");
+      }
+    }
+  };
+
   const loadShareMetadata = async (id: string) => {
     const path = `shares/${id}`;
     try {
@@ -541,7 +557,7 @@ export default function App() {
             </div>
           ) : (
             <button 
-              onClick={signIn}
+              onClick={handleSignIn}
               className="text-xs font-mono uppercase tracking-wider bg-white/5 hover:bg-white/10 px-4 py-2 rounded-md border border-white/10 transition-all"
             >
               Sign In

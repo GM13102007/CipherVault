@@ -1,5 +1,27 @@
 {
   "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile with a unique username.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username"]
+    },
+    "Username": {
+      "title": "Username Registry",
+      "description": "Ensures username uniqueness and maps to UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" }
+      },
+      "required": ["uid"]
+    },
     "Share": {
       "title": "Encrypted Share",
       "description": "Represents the metadata of an encrypted share.",
@@ -13,9 +35,19 @@
         "chunkCount": { "type": "number", "description": "Number of 1MB chunks in the sub-collection." },
         "createdAt": { "type": "string", "format": "date-time" },
         "expiresAt": { "type": "string", "format": "date-time" },
-        "ownerId": { "type": "string" }
+        "ownerId": { "type": "string" },
+        "recipientIds": { "type": "array", "items": { "type": "string" }, "description": "List of UIDs who received this share directly." }
       },
       "required": ["iv", "chunkCount", "createdAt", "expiresAt"]
+    },
+    "ShareKey": {
+      "title": "Exchange Key",
+      "description": "Individual key stored for a specific recipient (for Direct Share).",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "description": "The decryption key." }
+      },
+      "required": ["key"]
     },
     "Chunk": {
       "title": "Data Chunk",

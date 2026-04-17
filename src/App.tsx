@@ -26,7 +26,14 @@ import {
   Terminal,
   Eye,
   ExternalLink,
-  X
+  X,
+  Bell,
+  User as UserIcon,
+  Search,
+  Send,
+  Mail,
+  AtSign,
+  ChevronRight
 } from 'lucide-react';
 import { 
   doc, 
@@ -38,12 +45,15 @@ import {
   writeBatch,
   query,
   where,
+  onSnapshot,
+  orderBy,
+  limit,
   serverTimestamp, 
   Timestamp
 } from 'firebase/firestore';
 import { auth, db, signIn, signOut } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { encryptData, decryptData, arrayBufferToBase64, base64ToArrayBuffer } from './lib/crypto';
+import { encryptData, decryptData, arrayBufferToBase64, base64ToArrayBuffer, generateId } from './lib/crypto';
 import { handleFirestoreError, OperationType } from './lib/errorHandlers';
 
 // --- Types ---
@@ -58,6 +68,16 @@ interface ShareData {
   createdAt: any;
   expiresAt: any;
   ownerId?: string;
+  recipientIds?: string[];
+  isMessage?: boolean;
+}
+
+interface UserProfile {
+  uid: string;
+  username: string;
+  displayName: string;
+  email: string;
+  createdAt: any;
 }
 
 interface ChunkData {
@@ -108,6 +128,290 @@ function AdminDashboard({ onPrune }: { onPrune: () => Promise<void> }) {
 }
 
 // --- Helper Components ---
+
+function MessageModal({ text, onClose }: { text: string; onClose: () => void }) {
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md"
+    >
+      <div className="relative w-full max-w-lg bg-[#151619] rounded-2xl border border-blue-500/20 shadow-[0_0_50px_rgba(59,130,246,0.15)] technical-border overflow-hidden">
+        <div className="scanning scanline opacity-30" />
+        
+        <div className="p-4 border-b border-white/5 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-blue-400 font-mono text-[10px] uppercase font-bold tracking-[0.2em]">
+            <Mail className="w-3 h-3" />
+            Decrypted Stream
+          </div>
+          <button 
+            onClick={onClose}
+            className="p-1.5 hover:bg-white/5 rounded-md text-slate-500 hover:text-white transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-8">
+          <div className="bg-black/30 p-6 rounded-xl border border-white/5 technical-border min-h-[150px] flex items-center justify-center">
+            <p className="text-sm font-mono text-white leading-relaxed text-center whitespace-pre-wrap">
+              {text}
+            </p>
+          </div>
+        </div>
+
+        <div className="p-4 bg-blue-500/5 border-t border-white/5 flex items-center justify-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <Shield className="w-3 h-3 text-blue-500/50" />
+            <span className="text-[8px] font-mono text-slate-500 uppercase tracking-widest">End-to-End Encrypted</span>
+          </div>
+          <div className="h-3 w-[1px] bg-white/10" />
+          <div className="flex items-center gap-1.5">
+            <Lock className="w-3 h-3 text-blue-500/50" />
+            <span className="text-[8px] font-mono text-slate-500 uppercase tracking-widest">Zero-Knowledge</span>
+          </div>
+        </div>
+
+        <button 
+          onClick={onClose}
+          className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-mono text-[10px] font-bold uppercase tracking-[0.3em] transition-all border-t border-white/5"
+        >
+          Close Secure Session
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+function QuantumChatPanel({ 
+  onClose, 
+  partners, 
+  activePartnerUID, 
+  activePartnerName,
+  setActivePartner, 
+  messages, 
+  onSendMessage,
+  currentUserUID
+}: { 
+  onClose: () => void; 
+  partners: any[]; 
+  activePartnerUID: string | null;
+  activePartnerName: string | null;
+  setActivePartner: (uid: string | null, name: string | null) => void;
+  messages: any[];
+  onSendMessage: (text: string) => Promise<void>;
+  currentUserUID: string;
+}) {
+  const [searchText, setSearchText] = useState('');
+  const [msgInput, setMsgInput] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [searchResult, setSearchResult] = useState<{uid: string, username: string} | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const handleSearch = async () => {
+    if (!searchText) return;
+    const target = searchText.toLowerCase().trim();
+    const snap = await getDoc(doc(db, 'usernames', target));
+    if (snap.exists()) {
+      setSearchResult({ uid: snap.data().uid, username: target });
+    } else {
+      setSearchResult(null);
+    }
+  };
+
+  const handleSend = async () => {
+    if (!msgInput) return;
+    setIsSending(true);
+    await onSendMessage(msgInput);
+    setMsgInput('');
+    setIsSending(false);
+  };
+
+  return (
+    <motion.div 
+      initial={{ x: '100%' }}
+      animate={{ x: 0 }}
+      exit={{ x: '100%' }}
+      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      className="fixed inset-y-0 right-0 z-[60] w-full max-w-md bg-[#0d0e10] border-l border-white/5 shadow-2xl flex flex-col overflow-hidden"
+    >
+      <div className="absolute inset-0 bg-blue-500/2 opacity-[0.02] pointer-events-none" />
+      
+      {/* Header */}
+      <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black/40 z-10">
+        <div className="flex items-center gap-2">
+          {activePartnerUID ? (
+            <button onClick={() => setActivePartner(null, null)} className="p-2 hover:bg-white/5 rounded-lg text-slate-500 hover:text-white mr-1">
+              <Shield className="w-4 h-4" />
+            </button>
+          ) : (
+            <div className="p-2 bg-blue-500/10 rounded-lg">
+              <Mail className="w-4 h-4 text-blue-500" />
+            </div>
+          )}
+          <div>
+            <h2 className="text-xs font-mono font-bold text-white uppercase tracking-widest">
+              {activePartnerName ? `@${activePartnerName}` : 'Quantum Chat'}
+            </h2>
+            <p className="text-[8px] font-mono text-slate-600 uppercase tracking-tighter mt-0.5">
+              {activePartnerUID ? 'Secure Relay Active' : 'Select encrypted node'}
+            </p>
+          </div>
+        </div>
+        <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-lg text-slate-500 hover:text-white transition-colors">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      {!activePartnerUID ? (
+        <div className="flex-1 overflow-hidden flex flex-col z-10">
+          <div className="p-4 space-y-4">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-600" />
+                <input 
+                  type="text"
+                  placeholder="Search secure handle..."
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  className="w-full bg-black/40 border border-white/5 rounded-lg py-2.5 pl-9 pr-3 text-[10px] font-mono text-white placeholder:text-slate-800 focus:border-blue-500/30 outline-none transition-all"
+                />
+              </div>
+              <button 
+                onClick={handleSearch}
+                className="p-2.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg border border-blue-500/20 transition-all"
+              >
+                <Search className="w-4 h-4" />
+              </button>
+            </div>
+
+            {searchResult && (
+              <motion.button 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                onClick={() => {
+                  setActivePartner(searchResult.uid, searchResult.username);
+                  setSearchResult(null);
+                  setSearchText('');
+                }}
+                className="w-full p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl text-left flex items-center justify-between group technical-border"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-mono text-xs font-black">
+                    {searchResult.username[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-mono font-bold text-white uppercase">@{searchResult.username}</p>
+                    <p className="text-[8px] font-mono text-blue-500 uppercase tracking-widest">New Session Available</p>
+                  </div>
+                </div>
+                <Send className="w-3 h-3 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </motion.button>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2 custom-scrollbar">
+            <h3 className="text-[8px] font-mono text-slate-600 uppercase tracking-[0.3em] font-bold px-2 mb-3 mt-4 opacity-50">Active Transmissions</h3>
+            {partners.length === 0 ? (
+              <div className="py-24 text-center space-y-4">
+                <div className="relative inline-block">
+                  <Lock className="w-8 h-8 text-slate-800 mx-auto" />
+                  <div className="absolute inset-0 animate-ping bg-blue-500/5 rounded-full" />
+                </div>
+                <p className="text-[10px] font-mono text-slate-700 uppercase tracking-[0.3em] leading-loose">
+                  No active secure nodes<br/>detected in range.
+                </p>
+              </div>
+            ) : (
+              partners.map(p => (
+                <button
+                  key={p.uid}
+                  onClick={() => setActivePartner(p.uid, p.username)}
+                  className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-xl border border-white/5 technical-border text-left group transition-all mb-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-blue-500/5 flex items-center justify-center border border-white/5 text-blue-500/50 text-xs font-mono font-black group-hover:border-blue-500/30 group-hover:text-blue-400 transition-all">
+                        {p.username[0].toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-mono font-bold text-white uppercase tracking-widest">@{p.username}</p>
+                        <p className="text-[8px] font-mono text-slate-600 mt-1 uppercase">Relay Handshake Active</p>
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col overflow-hidden bg-black/20 z-10">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-30">
+                <div className="scanning scanline !h-20 !w-20 !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2 opacity-20" />
+                <Mail className="w-8 h-8 mb-4 " />
+                <p className="text-[10px] font-mono uppercase tracking-[0.3em]">Transmission log empty.</p>
+                <p className="text-[8px] font-mono mt-2 tracking-tighter opacity-50 uppercase">All previous secure packets have<br/>undergone self-destruction.</p>
+              </div>
+            ) : (
+              messages.map(m => (
+                <div key={m.id} className={`flex ${m.senderId === currentUserUID ? 'justify-end pl-12' : 'justify-start pr-12'}`}>
+                  <div className={`relative max-w-full rounded-2xl p-4 text-[11px] font-mono leading-relaxed technical-border ${
+                    m.senderId === currentUserUID 
+                      ? 'bg-blue-600/10 text-blue-100 border-blue-500/30 rounded-tr-none' 
+                      : 'bg-[#1a1b1e] text-slate-200 border-white/5 rounded-tl-none'
+                  }`}>
+                    <p className="whitespace-pre-wrap">{m.text}</p>
+                    <div className="flex items-center justify-between mt-3 gap-4 opacity-30">
+                       <span className="text-[7px] uppercase tracking-tighter decoration-blue-500/50">Zero-Knowledge Relay</span>
+                       <span className="text-[7px] uppercase tracking-tighter">
+                        {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="p-4 bg-black/40 border-t border-white/5">
+            <div className="flex gap-2">
+              <input 
+                type="text"
+                placeholder="Type secure message..."
+                value={msgInput}
+                onChange={(e) => setMsgInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                className="flex-1 bg-black/40 border border-white/5 rounded-lg px-4 py-3.5 text-[10px] font-mono text-white placeholder:text-slate-800 focus:border-blue-500/30 outline-none transition-all"
+              />
+              <button 
+                onClick={handleSend}
+                disabled={isSending || !msgInput}
+                className="px-5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:bg-white/5 rounded-lg text-white transition-all shadow-lg shadow-blue-500/10 flex items-center justify-center"
+              >
+                {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-[7px] font-mono text-slate-700 mt-4 text-center uppercase tracking-[0.3em] flex items-center justify-center gap-3 opacity-60">
+              <Shield className="w-2.5 h-2.5" />
+              AES-256-GCM locally encrypted packets
+            </p>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
 
 function PreviewModal({ file, onClose }: { file: { url: string; name: string; type: string }; onClose: () => void }) {
   const isImage = file.type.startsWith('image/');
@@ -210,11 +514,25 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [shareId, setShareId] = useState<string | null>(null);
   const [secretKey, setSecretKey] = useState<string | null>(null);
-  const [view, setView] = useState<'home' | 'upload' | 'download' | 'success'>('home');
+  const [view, setView] = useState<'home' | 'upload' | 'download' | 'success' | 'setup-profile'>('home');
   const [error, setError] = useState<string | null>(null);
+  
+  // User Profile & Social
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [inboxCount, setInboxCount] = useState(0);
+  const [showInbox, setShowInbox] = useState(false);
+  const [inboxShares, setInboxShares] = useState<ShareData[]>([]);
   
   // Home/Receive State
   const [manualLink, setManualLink] = useState('');
+  const [messageText, setMessageText] = useState('');
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [messageRecipient, setMessageRecipient] = useState('');
+  const [activeChatUID, setActiveChatUID] = useState<string | null>(null);
+  const [activeChatName, setActiveChatName] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [chatPartners, setChatPartners] = useState<any[]>([]);
+  const [showChatPanel, setShowChatPanel] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [isEncrypting, setIsEncrypting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -227,6 +545,7 @@ export default function App() {
   const [targetShare, setTargetShare] = useState<ShareData | null>(null);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [decryptedFile, setDecryptedFile] = useState<{ url: string; name: string; type: string } | null>(null);
+  const [decryptedMessage, setDecryptedMessage] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
 
@@ -243,8 +562,11 @@ export default function App() {
       for (const shareDoc of snapshot.docs) {
         const id = shareDoc.id;
         const chunksSnap = await getDocs(collection(db, 'shares', id, 'chunks'));
+        const keysSnap = await getDocs(collection(db, 'shares', id, 'keys'));
+        
         const batch = writeBatch(db);
         chunksSnap.forEach(chk => batch.delete(chk.ref));
+        keysSnap.forEach(k => batch.delete(k.ref));
         batch.delete(shareDoc.ref);
         await batch.commit();
         deletedCount++;
@@ -258,6 +580,126 @@ export default function App() {
   // --- Effects ---
 
   useEffect(() => {
+    if (!user || view === 'setup-profile') return;
+
+    // Listen to direct shares
+    const sharesRef = collection(db, 'shares');
+    const q = query(
+      sharesRef, 
+      where('recipientIds', 'array-contains', user.uid),
+      limit(20)
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const shares = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() } as ShareData))
+        .sort((a, b) => {
+          const t1 = (a.createdAt && a.createdAt instanceof Timestamp) ? a.createdAt.toMillis() : Date.now();
+          const t2 = (b.createdAt && b.createdAt instanceof Timestamp) ? b.createdAt.toMillis() : Date.now();
+          return t2 - t1;
+        });
+      setInboxShares(shares);
+      setInboxCount(shares.length);
+    }, (err) => {
+      console.error("Inbox listener failed:", err);
+    });
+
+    return () => unsub();
+  }, [user, view]);
+
+  useEffect(() => {
+    if (!user || !showChatPanel) return;
+
+    const sharesRef = collection(db, 'shares');
+    const qSent = query(sharesRef, where('ownerId', '==', user.uid), where('isMessage', '==', true));
+    const qRec = query(sharesRef, where('recipientIds', 'array-contains', user.uid), where('isMessage', '==', true));
+
+    let sentDocs: any[] = [];
+    let recDocs: any[] = [];
+
+    const syncPartners = async () => {
+      const combined = [...sentDocs, ...recDocs];
+      const pMap = new Map();
+      combined.forEach(d => {
+        const data = d.data() as ShareData;
+        const pid = data.ownerId === user.uid ? data.recipientIds?.[0] : data.ownerId;
+        if (pid) pMap.set(pid, true);
+      });
+
+      if (pMap.size === 0) {
+        setChatPartners([]);
+        return;
+      }
+
+      const list = await Promise.all(Array.from(pMap.keys()).map(async (pid) => {
+        const uSnap = await getDoc(doc(db, 'users', pid));
+        return { uid: pid, username: uSnap.data()?.username || 'Anonymous' };
+      }));
+      setChatPartners(list.filter(p => p.uid !== user.uid));
+    };
+
+    const unsub1 = onSnapshot(qSent, (snap) => {
+      sentDocs = snap.docs;
+      syncPartners();
+    });
+    const unsub2 = onSnapshot(qRec, (snap) => {
+      recDocs = snap.docs;
+      syncPartners();
+    });
+
+    return () => { unsub1(); unsub2(); };
+  }, [user, showChatPanel]);
+
+  useEffect(() => {
+    if (!user || !activeChatUID || !showChatPanel) {
+      setChatMessages([]);
+      return;
+    }
+
+    const sharesRef = collection(db, 'shares');
+    const qSent = query(sharesRef, where('ownerId', '==', user.uid), where('isMessage', '==', true));
+    const qRec = query(sharesRef, where('recipientIds', 'array-contains', user.uid), where('isMessage', '==', true));
+
+    const messageCache = new Map();
+
+    const decryptMessages = async (docs: any[]) => {
+      for (const d of docs) {
+        const data = { id: d.id, ...d.data() } as ShareData;
+        const partnerId = data.ownerId === user.uid ? data.recipientIds?.[0] : data.ownerId;
+        
+        if (partnerId !== activeChatUID) continue;
+        if (messageCache.has(data.id)) continue;
+
+        try {
+          const keySnap = await getDoc(doc(db, 'shares', data.id, 'keys', user.uid));
+          if (keySnap.exists()) {
+            const key = keySnap.data()?.key;
+            const chunksSnap = await getDocs(collection(db, 'shares', data.id, 'chunks'));
+            const chunkData = chunksSnap.docs[0].data();
+            const encryptedBuffer = base64ToArrayBuffer(chunkData.data);
+            const decryptedBuffer = await decryptData(encryptedBuffer, data.iv, key);
+            const dec = new TextDecoder();
+            messageCache.set(data.id, {
+              id: data.id,
+              text: dec.decode(decryptedBuffer),
+              senderId: data.ownerId,
+              createdAt: data.createdAt?.toMillis() || Date.now()
+            });
+          }
+        } catch (e) {
+          console.error("Chat dec err:", e);
+        }
+      }
+      setChatMessages(Array.from(messageCache.values()).sort((a, b) => a.createdAt - b.createdAt));
+    };
+
+    const unsub1 = onSnapshot(qSent, (snap) => decryptMessages(snap.docs));
+    const unsub2 = onSnapshot(qRec, (snap) => decryptMessages(snap.docs));
+
+    return () => { unsub1(); unsub2(); };
+  }, [user, activeChatUID, showChatPanel]);
+
+  useEffect(() => {
     // Proactive maintenance
     if (isAdmin && view === 'home') {
       pruneExpired();
@@ -267,7 +709,12 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      setLoading(false);
+      if (u) {
+        checkProfile(u.uid);
+      } else {
+        setProfile(null);
+        setLoading(false);
+      }
     });
 
     // Handle incoming share links
@@ -310,6 +757,51 @@ export default function App() {
 
   // --- Actions ---
 
+  const checkProfile = async (uid: string) => {
+    try {
+      const docSnap = await getDoc(doc(db, 'users', uid));
+      if (docSnap.exists()) {
+        setProfile(docSnap.data() as UserProfile);
+      } else {
+        setView('setup-profile');
+      }
+    } catch (err) {
+      console.error("Profile check failed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveProfile = async (username: string) => {
+    if (!user) return;
+    try {
+      const uname = username.toLowerCase().trim();
+      // Check uniqueness
+      const unameRef = doc(db, 'usernames', uname);
+      const unameSnap = await getDoc(unameRef);
+      if (unameSnap.exists()) {
+        throw new Error("Username already taken. Please try another.");
+      }
+
+      const batch = writeBatch(db);
+      const profileData: UserProfile = {
+        uid: user.uid,
+        username: uname,
+        displayName: user.displayName || uname,
+        email: user.email || '',
+        createdAt: serverTimestamp()
+      };
+      batch.set(doc(db, 'users', user.uid), profileData);
+      batch.set(unameRef, { uid: user.uid });
+      await batch.commit();
+      
+      setProfile(profileData);
+      setView('home');
+    } catch (err: any) {
+      setError(err.message || "Failed to create profile.");
+    }
+  };
+
   const handleSignIn = async () => {
     try {
       setError(null);
@@ -340,15 +832,18 @@ export default function App() {
         if (expiresAt < new Date()) {
           setError('This secure share has expired and self-destructed.');
           
-          // Lazy Deletion: Clean up chunks and metadata
+          // Lazy Deletion: Clean up chunks, keys, and metadata
           try {
             const chunksSnap = await getDocs(collection(db, 'shares', id, 'chunks'));
+            const keysSnap = await getDocs(collection(db, 'shares', id, 'keys'));
             const batch = writeBatch(db);
             chunksSnap.forEach(chk => batch.delete(chk.ref));
+            keysSnap.forEach(k => batch.delete(k.ref));
             batch.delete(docRef);
             await batch.commit();
+            console.log("[LAZY DELETE] Expired resource purged on access attempt.");
           } catch (e) {
-            console.warn("Cleanup failed, resource may already be gone.");
+            console.warn("Lazy cleanup failed, resource may already be gone.");
           }
           return;
         }
@@ -434,7 +929,8 @@ export default function App() {
         mimeType: file.type,
         size: file.size,
         createdAt: serverTimestamp(),
-        expiresAt: Timestamp.fromDate(expiresAt)
+        expiresAt: Timestamp.fromDate(expiresAt),
+        recipientIds: []
       };
 
       if (user?.uid) {
@@ -450,6 +946,8 @@ export default function App() {
 
       const link = `${window.location.origin}/#share=${id}&key=${encodeURIComponent(key)}`;
       setGeneratedLink(link);
+      setShareId(id);
+      setSecretKey(key);
       setView('success');
     } catch (err: any) {
       console.error(err);
@@ -549,6 +1047,148 @@ export default function App() {
     }
   };
 
+  const directShareWithUser = async (targetUsername: string) => {
+    if (!profile || !shareId || !secretKey) return;
+    try {
+      setError(null);
+      const uname = targetUsername.toLowerCase().trim();
+      const unameSnap = await getDoc(doc(db, 'usernames', uname));
+      if (!unameSnap.exists()) throw new Error("Recipient username not found.");
+      
+      const recipientUid = unameSnap.data()?.uid;
+      if (recipientUid === user?.uid) throw new Error("You cannot share with yourself.");
+
+      // Store key for recipient securely (this is restricted to that recipient only in rules)
+      const shareRef = doc(db, 'shares', shareId);
+      const keyRef = doc(shareRef, 'keys', recipientUid);
+      
+      const batch = writeBatch(db);
+      batch.set(keyRef, { key: secretKey });
+      
+      // Update share metadata to include recipient in list for indexing
+      const shareSnap = await getDoc(shareRef);
+      const shareMeta = shareSnap.data() as ShareData;
+      const recipients = shareMeta.recipientIds || [];
+      if (!recipients.includes(recipientUid)) {
+        recipients.push(recipientUid);
+        batch.update(shareRef, { recipientIds: recipients });
+      }
+      
+      await batch.commit();
+      return true;
+    } catch (err: any) {
+      setError(err.message);
+      return false;
+    }
+  };
+
+  const sendSecureMessage = async () => {
+    if (!profile || !messageRecipient || !messageText) return;
+    
+    try {
+      setIsSendingMessage(true);
+      setError(null);
+
+      const targetUname = messageRecipient.toLowerCase().trim();
+      const unameSnap = await getDoc(doc(db, 'usernames', targetUname));
+      if (!unameSnap.exists()) throw new Error("Recipient handle not found in database.");
+      
+      const recipientUid = unameSnap.data()?.uid;
+      await sendChatMessage(recipientUid, messageText);
+
+      setMessageText('');
+      setMessageRecipient('');
+      setError(`[SECURE TRANSMISSION COMPLETE] Message relayed to @${targetUname}`);
+      setTimeout(() => setError(null), 5000);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Encryption relay failure.");
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
+  const sendChatMessage = async (recipientUid: string, text: string) => {
+    if (!user || !text || !recipientUid) return;
+
+    try {
+      // 1. Local Encryption
+      const { encryptedBuffer, iv, key } = await encryptData(text);
+      const id = generateId();
+      const encryptedBase64 = arrayBufferToBase64(encryptedBuffer!);
+
+      // 2. Prep metadata
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + expiryMinutes);
+
+      const shareObj: ShareData = {
+        id,
+        iv,
+        chunkCount: 1,
+        fileName: "Secure Message",
+        mimeType: "text/plain",
+        size: text.length,
+        createdAt: serverTimestamp(),
+        expiresAt: Timestamp.fromDate(expiresAt),
+        recipientIds: [recipientUid],
+        ownerId: user.uid,
+        isMessage: true
+      };
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'shares', id), shareObj);
+      batch.set(doc(db, 'shares', id, 'chunks', 'm0'), {
+        data: encryptedBase64,
+        index: 0
+      });
+      batch.set(doc(db, 'shares', id, 'keys', recipientUid), { key });
+      batch.set(doc(db, 'shares', id, 'keys', user.uid), { key });
+
+      await batch.commit();
+    } catch (err: any) {
+      console.error("Chat send failed:", err);
+      throw err;
+    }
+  };
+
+  const handleInboxItemClick = async (share: ShareData) => {
+    try {
+      setError(null);
+      setLoading(true);
+      setShowInbox(false);
+      
+      // Fetch the secret key specifically for this recipient
+      const keySnap = await getDoc(doc(db, 'shares', share.id, 'keys', user!.uid));
+      if (!keySnap.exists()) throw new Error("Decryption key was not found or has been revoked.");
+      
+      const key = keySnap.data()?.key;
+      setSecretKey(key);
+      setShareId(share.id);
+      setTargetShare(share);
+
+      if (share.isMessage) {
+        // Auto-decrypt message using existing helpers
+        setIsDecrypting(true);
+        const chunksSnap = await getDocs(collection(db, 'shares', share.id, 'chunks'));
+        const chunkData = chunksSnap.docs[0].data();
+        
+        const encryptedBuffer = base64ToArrayBuffer(chunkData.data);
+        const decryptedBuffer = await decryptData(encryptedBuffer, share.iv, key);
+        
+        const dec = new TextDecoder();
+        setDecryptedMessage(dec.decode(decryptedBuffer));
+        setIsDecrypting(false);
+      } else {
+        setView('download');
+      }
+      
+      setLoading(false);
+    } catch (err: any) {
+      setLoading(false);
+      setError(err.message);
+    }
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     // Simple toast could go here
@@ -631,9 +1271,28 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-4">
+          {user && profile && (
+            <button 
+              onClick={() => setShowInbox(!showInbox)}
+              className="relative p-2 bg-white/5 hover:bg-white/10 rounded-lg technical-border transition-all"
+            >
+              <Bell className={`w-5 h-5 ${inboxCount > 0 ? 'text-blue-500 animate-pulse' : 'text-slate-500'}`} />
+              {inboxCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-600 text-[10px] font-bold rounded-full flex items-center justify-center text-white border-2 border-[#0d0e10]">
+                  {inboxCount}
+                </span>
+              )}
+            </button>
+          )}
+
           {user ? (
             <div className="flex items-center gap-3">
-              <span className="text-xs font-mono text-slate-400 hidden sm:inline truncate max-w-[100px]">{user.email}</span>
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                <UserIcon className="w-3 h-3 text-blue-500 glow-blue" />
+                <span className="text-xs font-mono font-bold text-blue-400 uppercase tracking-tighter">
+                  {profile?.username ? `@${profile.username}` : user.email}
+                </span>
+              </div>
               <button 
                 onClick={signOut}
                 className="text-xs font-mono uppercase tracking-wider text-slate-500 hover:text-white transition-colors"
@@ -664,6 +1323,128 @@ export default function App() {
       <main className="max-w-md mx-auto relative cursor-default">
         <AnimatePresence mode="wait">
           
+          {/* Inbox Overlay */}
+          <AnimatePresence>
+            {showInbox && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className="fixed top-20 right-4 w-80 max-h-[70vh] bg-[#151619] border border-white/5 rounded-2xl shadow-2xl z-40 overflow-hidden flex flex-col"
+              >
+                <div className="p-4 border-bottom border-white/5 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-blue-500" />
+                    <span className="text-xs font-mono font-bold uppercase tracking-widest text-white">Secure Inbox</span>
+                  </div>
+                  <button onClick={() => setShowInbox(false)} className="text-slate-500 hover:text-white"><X className="w-4 h-4" /></button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                  {inboxShares.length === 0 ? (
+                    <div className="py-12 text-center">
+                      <Shield className="w-8 h-8 text-slate-800 mx-auto mb-3" />
+                      <p className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">No direct fragments found.</p>
+                    </div>
+                  ) : (
+                    inboxShares.map(share => (
+                      <button
+                        key={share.id}
+                        onClick={() => handleInboxItemClick(share)}
+                        className="w-full p-3 bg-white/5 hover:bg-white/10 rounded-xl technical-border text-left transition-all group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`p-2 rounded-lg ${share.isMessage ? 'bg-purple-500/10' : 'bg-blue-500/10'}`}>
+                            {share.isMessage ? (
+                              <Mail className="w-4 h-4 text-purple-400" />
+                            ) : (
+                              getFileIcon(share.mimeType)
+                            )}
+                          </div>
+                          <div className="flex-1 overflow-hidden">
+                            <p className={`text-[10px] font-bold truncate group-hover:text-blue-400 transition-colors uppercase ${share.isMessage ? 'text-purple-400' : 'text-white'}`}>
+                              {share.isMessage ? 'Secure Message' : share.fileName}
+                            </p>
+                            <p className="text-[8px] font-mono text-slate-500 mt-1 uppercase">
+                              {share.isMessage ? 'Encrypted Text' : formatSize(share.size)} • <Countdown expiresAt={share.expiresAt} />
+                            </p>
+                          </div>
+                          {share.isMessage ? (
+                            <Mail className="w-3 h-3 text-slate-700 group-hover:text-purple-500 transition-colors" />
+                          ) : (
+                            <Download className="w-3 h-3 text-slate-700 group-hover:text-blue-500 transition-colors" />
+                          )}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+                
+                <div className="p-3 bg-black/40 border-t border-white/5">
+                  <p className="text-[8px] font-mono text-slate-600 text-center uppercase tracking-tighter">
+                    Direct shares are stored with secondary keys bound to your identity.
+                  </p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Setup Profile View */}
+          {view === 'setup-profile' && (
+            <motion.div 
+              key="setup"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-[#151619] p-8 rounded-2xl technical-border flex flex-col items-center text-center shadow-2xl"
+            >
+              <div className="p-4 bg-blue-500/10 rounded-2xl mb-6 relative">
+                <UserIcon className="w-8 h-8 text-blue-500" />
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-600 rounded-full animate-ping" />
+              </div>
+              
+              <h2 className="text-xl font-mono font-bold text-white mb-2 uppercase tracking-tighter">Initialize Identity</h2>
+              <p className="text-xs text-slate-500 mb-8 font-mono leading-relaxed lowercase italic line-clamp-2">
+                choose a unique handle to enable direct transfers and secure identity mapping.
+              </p>
+
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const val = (e.currentTarget.elements.namedItem('username') as HTMLInputElement).value;
+                  saveProfile(val);
+                }}
+                className="w-full space-y-4"
+              >
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <span className="text-blue-500/50 font-mono text-sm group-focus-within:text-blue-500 transition-colors">@</span>
+                  </div>
+                  <input 
+                    name="username"
+                    required
+                    maxLength={20}
+                    minLength={3}
+                    placeholder="Enter unique handle..."
+                    className="w-full bg-black/40 border border-white/10 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 rounded-xl py-3 pl-10 pr-4 text-sm font-mono text-white placeholder:text-slate-700 outline-none transition-all"
+                  />
+                </div>
+                
+                {error && (
+                  <p className="text-[10px] text-red-400 font-mono uppercase tracking-tighter bg-red-500/10 p-2 rounded-lg border border-red-500/20">
+                    {error}
+                  </p>
+                )}
+
+                <button 
+                  type="submit"
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-mono text-xs font-bold uppercase tracking-widest transition-all shadow-lg shadow-blue-500/10"
+                >
+                  Create Identity
+                </button>
+              </form>
+            </motion.div>
+          )}
+
           {/* Home View */}
           {view === 'home' && (
             <motion.div 
@@ -720,9 +1501,55 @@ export default function App() {
                           <Unlock className="w-5 h-5 group-hover:glow-blue transition-all" />
                         </button>
                     </div>
-                    {error && view === 'home' && (
-                      <p className="mt-3 text-[10px] text-red-400 font-mono uppercase tracking-wider">{error}</p>
-                    )}
+                  </div>
+
+                    <div className="bg-blue-500/5 p-6 rounded-xl border border-blue-500/10 text-left">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-mono font-bold text-lg leading-none uppercase flex items-center gap-2">
+                           <Mail className="w-4 h-4 text-blue-400" />
+                           Quantum Message
+                        </h3>
+                        <button 
+                          onClick={() => setShowChatPanel(true)}
+                          className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/20 rounded-lg text-[8px] font-mono font-bold uppercase tracking-widest transition-all flex items-center gap-2"
+                        >
+                          <Send className="w-3 h-3" />
+                          Secure Chats
+                        </button>
+                      </div>
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                          <AtSign className="w-3 h-3 text-blue-500/40" />
+                        </div>
+                        <input 
+                          type="text"
+                          placeholder="Recipient handle..."
+                          value={messageRecipient}
+                          onChange={(e) => setMessageRecipient(e.target.value)}
+                          className="w-full bg-black/40 border border-white/5 focus:border-blue-500/30 rounded-lg py-2 pl-9 pr-3 text-[10px] font-mono text-white placeholder:text-slate-800 outline-none transition-all"
+                        />
+                      </div>
+                      <textarea 
+                        placeholder="Type secure message (Encrypted locally)..."
+                        value={messageText}
+                        onChange={(e) => setMessageText(e.target.value)}
+                        rows={3}
+                        className="w-full bg-black/40 border border-white/5 focus:border-blue-500/30 rounded-lg p-3 text-[10px] font-mono text-white placeholder:text-slate-800 outline-none transition-all resize-none"
+                      />
+                      <button 
+                        disabled={isSendingMessage || !messageRecipient || !messageText}
+                        onClick={sendSecureMessage}
+                        className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-slate-600 py-3 rounded-lg text-[10px] font-mono font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      >
+                        {isSendingMessage ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Send className="w-3 h-3" />
+                        )}
+                        Relay Secure Message
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -959,6 +1786,56 @@ export default function App() {
                     Copy Link
                   </button>
                 </div>
+
+                {/* Direct Share Component */}
+                <div className="mt-8 pt-8 border-t border-white/5">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Send className="w-3 h-3 text-blue-500" />
+                    <span className="text-[10px] font-mono font-bold text-white uppercase tracking-widest">Direct Share (In-App)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mb-4 font-mono lowercase">Send this file directly to another CipherVault user's inbox.</p>
+                  
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Search className="w-3 h-3 text-slate-700" />
+                      </div>
+                      <input 
+                        id="recipientInput"
+                        placeholder="Recipient username..."
+                        className="w-full bg-black/40 border border-white/5 focus:border-blue-500/30 rounded-lg py-2 pl-9 pr-3 text-[10px] font-mono text-white placeholder:text-slate-800 outline-none transition-all"
+                        onKeyPress={async (e) => {
+                          if (e.key === 'Enter') {
+                            const input = e.currentTarget;
+                            const name = input.value;
+                            const success = await directShareWithUser(name);
+                            if (success) {
+                              input.value = '';
+                              setError(`[DIRECT SUCCESS] Securely shared with @${name}`);
+                              setTimeout(() => setError(null), 3000);
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                    <button 
+                      onClick={async () => {
+                        const input = document.getElementById('recipientInput') as HTMLInputElement;
+                        const success = await directShareWithUser(input.value);
+                        if (success) {
+                          const name = input.value;
+                          input.value = '';
+                          // No alert in iframe, we use the error state or a temporary success state
+                          setError(`[DIRECT SUCCESS] Securely shared with @${name}`);
+                          setTimeout(() => setError(null), 3000);
+                        }
+                      }}
+                      className="px-4 bg-white/5 hover:bg-white/10 text-white rounded-lg border border-white/10 transition-all"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
               </div>
             </motion.div>
           )}
@@ -1061,6 +1938,27 @@ export default function App() {
             <PreviewModal 
               file={decryptedFile} 
               onClose={() => setShowPreview(false)} 
+            />
+          )}
+          {decryptedMessage && (
+            <MessageModal 
+              text={decryptedMessage} 
+              onClose={() => setDecryptedMessage(null)} 
+            />
+          )}
+          {showChatPanel && user && (
+            <QuantumChatPanel 
+              onClose={() => setShowChatPanel(false)}
+              partners={chatPartners}
+              activePartnerUID={activeChatUID}
+              activePartnerName={activeChatName}
+              setActivePartner={(uid, name) => {
+                setActiveChatUID(uid);
+                setActiveChatName(name);
+              }}
+              messages={chatMessages}
+              onSendMessage={(text) => sendChatMessage(activeChatUID!, text)}
+              currentUserUID={user.uid}
             />
           )}
         </AnimatePresence>

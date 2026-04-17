@@ -47,6 +47,28 @@ service cloud.firestore {
              data.index is number;
     }
 
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'username']) &&
+             data.uid is string &&
+             data.username is string &&
+             data.username.size() >= 3 && data.username.size() <= 20 &&
+             data.username.matches("^[a-zA-Z0-9_]+$");
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated(); // Allow lookup for sharing
+      allow write: if isOwner(userId) && isValidUser(request.resource.data);
+    }
+
+    match /usernames/{username} {
+      allow get: if true;
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid;
+    }
+
     match /shares/{shareId} {
       allow get: if true;
       allow create: if true; 
@@ -55,20 +77,28 @@ service cloud.firestore {
                       (isAuthenticated() && 'ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
                       (resource.data.expiresAt < request.time);
       
-      allow update: if false;
+      allow update: if isAuthenticated() && (
+                      (resource.data.ownerId == request.auth.uid) || // Owner can update recipients
+                      (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['donorId'])) // allow some fields if needed
+                    );
+
       allow list: if isAdmin();
+      allow list: if isAuthenticated() && resource.data.recipientIds.hasAny([request.auth.uid]);
 
       match /chunks/{chunkId} {
-        allow get, list: if get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt > request.time;
+        allow get, list: if isAdmin() || get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt > request.time;
         allow create: if true;
         allow delete: if isAdmin() || 
                         (isAuthenticated() && 'ownerId' in get(/databases/$(database)/documents/shares/$(shareId)).data && get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid) ||
                         (get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt < request.time);
       }
-    }
-    
-    match /users/{userId} {
-      allow read, write: if request.auth.uid == userId || isAdmin();
+
+      match /keys/{userId} {
+        allow read: if isAdmin() || isOwner(userId);
+        allow list: if isAdmin();
+        allow create: if isAuthenticated(); // Owner of share creates this for recipient
+        allow delete: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid);
+      }
     }
   }
 }

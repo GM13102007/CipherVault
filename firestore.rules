@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: shares
+    // Fields:
+    //   - encryptedData: string (required)
+    //   - iv: string (required)
+    //   - createdAt: timestamp (required)
+    //   - expiresAt: timestamp (required)
+    //   - ownerId: string (optional)
+    //   - fileName: string (optional)
+    //   - mimeType: string (optional)
+    //   - size: number (optional)
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          (request.auth.token.email == "transferd001@gmail.com" && request.auth.token.email_verified == true)
+        );
+    }
+
+    function isRecent(time) {
+      return time > duration.value(-5, 'm') && time < duration.value(5, 'm');
+    }
+
+    function isValidShare(data) {
+      return data.keys().hasAll(['iv', 'createdAt', 'expiresAt', 'chunkCount']) &&
+             data.iv is string && 
+             data.chunkCount is number &&
+             data.chunkCount > 0 && data.chunkCount <= 30 &&
+             data.expiresAt is timestamp;
+    }
+
+    function isValidChunk(data) {
+      return data.keys().hasAll(['data', 'index']) &&
+             data.data is string && 
+             data.index is number;
+    }
+
+    match /shares/{shareId} {
+      allow get: if true;
+      allow create: if true; 
+      
+      allow delete: if isAdmin() || 
+                      (isAuthenticated() && 'ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
+                      (resource.data.expiresAt < request.time);
+      
+      allow update: if false;
+      allow list: if isAdmin();
+
+      match /chunks/{chunkId} {
+        allow get, list: if true;
+        allow create: if true;
+        allow delete: if isAdmin() || 
+                        (isAuthenticated() && 'ownerId' in get(/databases/$(database)/documents/shares/$(shareId)).data && get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid) ||
+                        (get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt < request.time);
+      }
+    }
+    
+    match /users/{userId} {
+      allow read, write: if request.auth.uid == userId || isAdmin();
+    }
+  }
+}

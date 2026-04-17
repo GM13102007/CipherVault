@@ -1,0 +1,8 @@
+{
+  "name": "CipherVault",
+  "description": "Zero-knowledge secure file sharing with client-side AES-256 encryption. Decryption keys never leave your browser.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}

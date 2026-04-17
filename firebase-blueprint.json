@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "Share": {
+      "title": "Encrypted Share",
+      "description": "Represents the metadata of an encrypted share.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "iv": { "type": "string" },
+        "fileName": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "size": { "type": "number" },
+        "chunkCount": { "type": "number", "description": "Number of 1MB chunks in the sub-collection." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["iv", "chunkCount", "createdAt", "expiresAt"]
+    },
+    "Chunk": {
+      "title": "Data Chunk",
+      "description": "A 1MB chunk of encrypted data.",
+      "type": "object",
+      "properties": {
+        "data": { "type": "string", "description": "Base64 encoded encrypted chunk." },
+        "index": { "type": "number", "description": "Order of the chunk." }
+      },
+      "required": ["data", "index"]
+    }
+  },
+  "firestore": {
+    "/shares/{shareId}": {
+      "schema": "Share",
+      "description": "Top-level metadata."
+    },
+    "/shares/{shareId}/chunks/{chunkId}": {
+      "schema": "Chunk",
+      "description": "Encrypted file pieces."
+    }
+  }
+}

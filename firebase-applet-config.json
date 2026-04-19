@@ -1,10 +1,10 @@
 {
-  "projectId": "gen-lang-client-0554050591",
-  "appId": "1:974147800540:web:b332c374fa6701e34c9319",
-  "apiKey": "AIzaSyAJcE20xwaRYolc8RyhOk24Bor56QweK0s",
-  "authDomain": "gen-lang-client-0554050591.firebaseapp.com",
+  "projectId": "cipher-vault-ab717",
+  "appId": "1:263381861710:web:f9bdc2200566e264808a1f",
+  "apiKey": "AIzaSyDZcyIjpHmGX35rj49BVVk5Gb6hc7HC0d4",
+  "authDomain": "cipher-vault-ab717.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-9380d5f7-e046-4398-980c-87cacd8bbbe6",
-  "storageBucket": "gen-lang-client-0554050591.firebasestorage.app",
-  "messagingSenderId": "974147800540",
+  "storageBucket": "cipher-vault-ab717.firebasestorage.app",
+  "messagingSenderId": "263381861710",
   "measurementId": ""
 }

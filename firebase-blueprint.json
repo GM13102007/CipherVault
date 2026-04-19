@@ -68,6 +68,22 @@
     "/shares/{shareId}/chunks/{chunkId}": {
       "schema": "Chunk",
       "description": "Encrypted file pieces."
+    },
+    "/shares/{shareId}/keys/{userId}": {
+      "schema": "ShareKey",
+      "description": "Exchange keys for direct shares."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and terminal key registries."
+    },
+    "/usernames/{username}": {
+      "schema": "Username",
+      "description": "Handle lookup registry."
+    },
+    "/custom_keys/{keyId}": {
+      "schema": "object",
+      "description": "Terminal key to share mappings."
     }
   }
 }

@@ -76,14 +76,19 @@ export async function decryptData(
   return decrypted;
 }
 
-// Helper: TypedArray/ArrayBuffer to Base64
+// Helper: TypedArray/ArrayBuffer to Base64 (Optimized for large files)
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  let binary = '';
   const bytes = new Uint8Array(buffer);
+  let binary = '';
   const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  
+  // Use chunked processing to avoid stack overflow with apply and keep performance high
+  const step = 8192;
+  for (let i = 0; i < len; i += step) {
+    const chunk = bytes.subarray(i, i + step);
+    binary += String.fromCharCode.apply(null, chunk as any);
   }
+  
   return window.btoa(binary);
 }
 

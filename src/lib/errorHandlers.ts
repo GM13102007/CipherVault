@@ -33,6 +33,8 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const isQuotaError = error instanceof Error && error.message.includes('resource-exhausted');
+  
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -51,6 +53,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  
+  // Suppress repeated console logging for quota errors to avoid flooding
+  if (!isQuotaError) {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
+  
+  throw error; // Throw original error so we can catch '.code === resource-exhausted' in App.tsx
 }

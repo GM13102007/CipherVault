@@ -1,104 +1,88 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    // Collection: shares
-    // Fields:
-    //   - encryptedData: string (required)
-    //   - iv: string (required)
-    //   - createdAt: timestamp (required)
-    //   - expiresAt: timestamp (required)
-    //   - ownerId: string (optional)
-    //   - fileName: string (optional)
-    //   - mimeType: string (optional)
-    //   - size: number (optional)
-    // ===============================================================
-
-    function isAuthenticated() {
-      return request.auth != null;
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
     }
 
-    function isAdmin() {
-      return isAuthenticated() &&
-        (
-          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-          (request.auth.token.email == "transferd001@gmail.com" && request.auth.token.email_verified == true)
-        );
-    }
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
 
-    function isRecent(time) {
-      return time > duration.value(-5, 'm') && time < duration.value(5, 'm');
-    }
-
-    function isValidShare(data) {
-      return data.keys().hasAll(['iv', 'createdAt', 'expiresAt', 'chunkCount']) &&
-             data.iv is string && 
-             data.chunkCount is number &&
-             data.chunkCount > 0 && data.chunkCount <= 30 &&
-             data.expiresAt is timestamp;
-    }
-
-    function isValidChunk(data) {
-      return data.keys().hasAll(['data', 'index']) &&
-             data.data is string && 
-             data.index is number;
-    }
-
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
-    function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'username']) &&
-             data.uid is string &&
-             data.username is string &&
-             data.username.size() >= 3 && data.username.size() <= 20 &&
-             data.username.matches("^[a-zA-Z0-9_]+$");
-    }
-
+    // --- User Profiles ---
     match /users/{userId} {
-      allow read: if isAuthenticated(); // Allow lookup for sharing
-      allow write: if isOwner(userId) && isValidUser(request.resource.data);
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && 
+        incoming().uid == userId && 
+        incoming().username is string &&
+        incoming().username.size() >= 3 &&
+        incoming().username.size() <= 20;
+      allow update: if isOwner(userId) && 
+        incoming().uid == userId &&
+        incoming().username == existing().username;
     }
 
     match /usernames/{username} {
-      allow get: if true;
-      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid;
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && 
+        incoming().uid == request.auth.uid &&
+        isValidId(username);
     }
 
+    // --- Shares & Chunks ---
     match /shares/{shareId} {
-      allow get: if true;
-      allow create: if true; 
+      allow read: if (
+        existing().recipientIds == [] || 
+        request.auth.uid in existing().recipientIds || 
+        existing().ownerId == request.auth.uid
+      );
       
-      allow delete: if isAdmin() || 
-                      (isAuthenticated() && 'ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
-                      (resource.data.expiresAt < request.time);
+      allow create: if isSignedIn() && 
+        incoming().ownerId == request.auth.uid &&
+        incoming().chunkCount is number &&
+        incoming().chunkCount > 0 &&
+        incoming().chunkCount <= 20; // 20MB limit for safety
       
-      allow update: if isAuthenticated() && (
-                      (resource.data.ownerId == request.auth.uid) || // Owner can update recipients
-                      (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['donorId'])) // allow some fields if needed
-                    );
+      allow update: if isOwner(existing().ownerId) && 
+        incoming().diff(existing()).affectedKeys().hasOnly(['recipientIds']);
 
-      allow list: if isAdmin();
-      allow list: if isAuthenticated() && resource.data.recipientIds.hasAny([request.auth.uid]);
-
+      allow delete: if isOwner(existing().ownerId) || 
+        (isSignedIn() && request.auth.token.email == 'transferd001@gmail.com') ||
+        (existing().expiresAt < request.time);
+      
+      // Chunks
       match /chunks/{chunkId} {
-        allow get, list: if isAdmin() || get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt > request.time;
-        allow create: if true;
-        allow delete: if isAdmin() || 
-                        (isAuthenticated() && 'ownerId' in get(/databases/$(database)/documents/shares/$(shareId)).data && get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid) ||
-                        (get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt < request.time);
+        allow read: if (
+          get(/databases/$(database)/documents/shares/$(shareId)).data.recipientIds == [] || 
+          request.auth.uid in get(/databases/$(database)/documents/shares/$(shareId)).data.recipientIds || 
+          get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid
+        );
+        allow create: if isSignedIn() && 
+          get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid;
+        allow delete: if isSignedIn() || 
+          (get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt < request.time);
       }
 
+      // Keys
       match /keys/{userId} {
-        allow read: if isAdmin() || isOwner(userId);
-        allow list: if isAdmin();
-        allow create: if isAuthenticated(); // Owner of share creates this for recipient
-        allow delete: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid);
+        allow read: if isOwner(userId) || 
+          get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid;
+        allow create: if isSignedIn() && 
+          get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid;
+        allow delete: if isSignedIn() || 
+          (get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt < request.time);
       }
+    }
+
+    // Custom Keys
+    match /custom_keys/{keyId} {
+      allow read: if true; // Public access for key retrieval
+      allow create: if isSignedIn();
+      allow delete: if isSignedIn(); 
     }
   }
 }

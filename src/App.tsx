@@ -896,15 +896,28 @@ export default function App() {
     };
   }, [user, showChatPanel, activeChatUID, currentTime]);
 
+  const playNotification = () => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch((e) => console.log("CipherVault Audio restricted:", e));
+    }
+  };
+
+  const lastPlayedId = useRef<string | null>(null);
+
   // Multi-Node Sound Notification
   useEffect(() => {
-    if (inboxShares.length > prevInboxCount.current && prevInboxCount.current > 0) {
-      if (audioRef.current) {
-        audioRef.current.play().catch((e) => console.log("Audio block:", e));
+    if (inboxShares.length > 0) {
+      const latest = inboxShares[0];
+      if (latest && latest.id !== lastPlayedId.current && prevInboxCount.current > 0) {
+        if (latest.ownerId !== user?.uid) {
+          playNotification();
+          lastPlayedId.current = latest.id;
+        }
       }
     }
     prevInboxCount.current = inboxShares.length;
-  }, [inboxShares]);
+  }, [inboxShares, user]);
 
   useEffect(() => {
     // Prime audio on first interaction to bypass browser restrictions
@@ -1230,20 +1243,49 @@ export default function App() {
       const nodes = [primaryDb, backupDb];
       let metadata: any = null;
       let chunksData: ChunkData[] = [];
+      let foundOnNode = false;
 
       for (const node of nodes) {
-        const snap = await getDoc(doc(node, 'shares', targetShare.id));
-        if (snap.exists()) {
-          metadata = snap.data();
-          const cSnap = await getDocs(collection(node, 'shares', targetShare.id, 'chunks'));
-          chunksData = cSnap.docs.map(d => d.data() as ChunkData).sort((a,b) => a.index - b.index);
-          break;
+        try {
+          const snap = await getDoc(doc(node, 'shares', targetShare.id));
+          if (snap.exists()) {
+            metadata = snap.data();
+            const cSnap = await getDocs(collection(node, 'shares', targetShare.id, 'chunks'));
+            // Support both 'index' and 'chunk_index' field names
+            chunksData = cSnap.docs.map(d => {
+              const dData = d.data();
+              return { data: dData.data, index: dData.index ?? dData.chunk_index } as ChunkData;
+            }).sort((a,b) => a.index - b.index);
+            foundOnNode = true;
+            break;
+          }
+        } catch (e) {
+          console.warn("Node fetch failed, trying next...");
         }
       }
 
-      if (!metadata) throw new Error("File not found on any network node.");
+      // Check Supabase if not found on Firebase nodes
+      if (!foundOnNode && isSupabaseReady() && supabase) {
+        const { data: sbChunks } = await supabase
+          .from('chunks')
+          .select('*')
+          .eq('share_id', targetShare.id)
+          .order('chunk_index', { ascending: true });
+        
+        if (sbChunks && sbChunks.length > 0) {
+          chunksData = sbChunks.map(c => ({ data: c.data, index: c.chunk_index }));
+          metadata = targetShare;
+          foundOnNode = true;
+          setIsBackupActive(true);
+        }
+      }
 
-      const combined = new Uint8Array(chunksData.reduce((acc, c) => acc + base64ToArrayBuffer(c.data).byteLength, 0));
+      if (!foundOnNode || !metadata || chunksData.length === 0) {
+        throw new Error("File chunks not found on any network node.");
+      }
+
+      const combinedSize = chunksData.reduce((acc, c) => acc + base64ToArrayBuffer(c.data).byteLength, 0);
+      const combined = new Uint8Array(combinedSize);
       let offset = 0;
       chunksData.forEach(c => {
         const buf = new Uint8Array(base64ToArrayBuffer(c.data));
@@ -1254,8 +1296,9 @@ export default function App() {
       const decryptedBuffer = await decryptData(combined.buffer, targetShare.iv, secretKey);
       const blob = new Blob([decryptedBuffer], { type: targetShare.mimeType });
       return { url: URL.createObjectURL(blob), name: targetShare.fileName, type: targetShare.mimeType };
-    } catch (err) {
-      setError("Decryption failed.");
+    } catch (err: any) {
+      console.error("Encryption/Decryption spectrum failure:", err);
+      setError(err.message || "Decryption failed.");
       return null;
     } finally {
       setIsDecrypting(false);
@@ -1275,6 +1318,7 @@ export default function App() {
   const handlePreview = async () => {
     const file = await processSecureFile();
     if (file) {
+      setDecryptedFile(file);
       setShowPreview(true);
     }
   };

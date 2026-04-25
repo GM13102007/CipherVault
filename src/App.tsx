@@ -45,7 +45,9 @@ import {
   Hash,
   Fingerprint,
   LogOut,
-  Edit
+  Edit,
+  Home,
+  MessageSquare
 } from 'lucide-react';
 import { 
   doc, 
@@ -66,7 +68,8 @@ import {
   arrayUnion,
   arrayRemove,
   or,
-  and
+  and,
+  getDocFromServer
 } from 'firebase/firestore';
 import { auth, db, primaryAuth, primaryDb, backupAuth, backupDb, signInAll, signOutAll } from './firebase';
 import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
@@ -155,7 +158,7 @@ function MessageModal({ text, sender, onClose }: { text: string; sender?: string
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-bg-base/90 backdrop-blur-md"
+      className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-bg-base/90 backdrop-blur-md"
     >
       <div className="relative w-full max-w-lg bg-bg-card rounded-2xl border border-blue-500/20 shadow-2xl technical-border overflow-hidden">
         <div className="scanning scanline opacity-30" />
@@ -549,14 +552,14 @@ function PreviewModal({ file, onClose }: { file: { url: string; name: string; ty
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm"
+      className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm"
     >
       <div className="relative w-full max-w-4xl max-h-[90vh] flex flex-col items-center">
         <div className="absolute -top-12 right-0 flex items-center gap-4">
           <a 
             href={file.url} 
             download={file.name}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-mono text-[10px] uppercase tracking-widest transition-all"
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-mono text-[10px] uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]"
           >
             <Download className="w-3 h-3" />
             Download
@@ -569,13 +572,34 @@ function PreviewModal({ file, onClose }: { file: { url: string; name: string; ty
           </button>
         </div>
 
-        <div className="w-full h-full bg-black/40 rounded-2xl border border-white/5 overflow-hidden flex items-center justify-center technical-border">
+        <div className="w-full h-full bg-[#0a0b0d] rounded-2xl border border-white/5 overflow-hidden flex items-center justify-center technical-border relative">
           {isImage ? (
-            <img src={file.url} alt={file.name} className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+            <img 
+              src={file.url} 
+              alt={file.name} 
+              className="max-w-full max-h-full object-contain" 
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                (e.target as any).src = '';
+                (e.target as any).onerror = null;
+              }}
+            />
           ) : isVideo ? (
-            <video src={file.url} controls className="max-w-full max-h-full" />
+            <video 
+              src={file.url} 
+              controls 
+              autoPlay
+              playsInline
+              className="max-w-full max-h-full" 
+            />
           ) : isPdf ? (
-            <iframe src={file.url} className="w-full h-full min-h-[70vh] border-none" />
+            <object
+              data={file.url}
+              type="application/pdf"
+              className="w-full h-full min-h-[70vh]"
+            >
+              <iframe src={file.url} className="w-full h-full min-h-[70vh] border-none" />
+            </object>
           ) : (
             <div className="p-12 text-center">
               <FileText className="w-16 h-16 text-slate-700 mx-auto mb-4" />
@@ -585,11 +609,11 @@ function PreviewModal({ file, onClose }: { file: { url: string; name: string; ty
           )}
         </div>
         
-        <div className="mt-4 flex flex-col items-center gap-1">
-          <p className="text-xs font-mono font-bold text-white tracking-widest uppercase truncate max-w-full px-4">{file.name}</p>
+        <div className="mt-4 flex flex-col items-center gap-1 w-full overflow-hidden">
+          <p className="text-xs font-mono font-bold text-white tracking-widest uppercase truncate max-w-[80vw] px-4">{file.name}</p>
           <div className="flex items-center gap-2 text-[8px] font-mono text-slate-500 uppercase tracking-tighter">
             <Shield className="w-3 h-3 text-blue-500/50" />
-            Decrypted Zero-Knowledge Stream
+            Decrypted Zero-Knowledge Stream ({file.type})
           </div>
         </div>
       </div>
@@ -652,6 +676,7 @@ export default function App() {
   const [shareId, setShareId] = useState<string | null>(null);
   const [secretKey, setSecretKey] = useState<string | null>(null);
   const [view, setView] = useState<'home' | 'upload' | 'download' | 'success' | 'setup-profile'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'chat' | 'notifications' | 'profile'>('home');
   const [error, setError] = useState<string | null>(null);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light' | 'system'>(() => {
@@ -665,10 +690,36 @@ export default function App() {
   const prevInboxCount = useRef(inboxShares.length);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const decryptedCache = useRef<Map<string, any>>(new Map());
+  const usernameCache = useRef<Map<string, string>>(new Map());
   const [seenMessageIds, setSeenMessageIds] = useState<Set<string>>(() => {
     const saved = localStorage.getItem('seen_fragments');
     return saved ? new Set(JSON.parse(saved)) : new Set();
   });
+
+  // Connectivity Monitor
+  useEffect(() => {
+    async function testConnection() {
+      try {
+        // Test primary node
+        await getDocFromServer(doc(primaryDb, '_health', 'check'));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Primary Node: Connection restricted. Check environment firewall.");
+          setError("Network restricted: Could not reach Security Core. Some features may be limited.");
+        }
+      }
+      
+      try {
+        // Test backup node
+        await getDocFromServer(doc(backupDb, '_health', 'check'));
+      } catch (error) {
+         if (error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Backup Node: Connection restricted.");
+        }
+      }
+    }
+    testConnection();
+  }, []);
   
   // Home/Receive State
   const [manualLink, setManualLink] = useState('');
@@ -852,12 +903,20 @@ export default function App() {
         }
       }
 
-      // Sync partners list (resolved usernames)
-      // Sync partners list (resolved usernames)
+      // Sync partners list (resolved usernames with caching)
       const partnerList = await Promise.all(
         Array.from(partnersMap.values()).map(async (p: any) => {
-          const uSnap = await getDoc(doc(db, 'users', p.uid));
-          return { uid: p.uid, username: uSnap.data()?.username || 'Anonymous' };
+          if (usernameCache.current.has(p.uid)) {
+            return { uid: p.uid, username: usernameCache.current.get(p.uid) };
+          }
+          try {
+            const uSnap = await getDoc(doc(db, 'users', p.uid));
+            const uname = uSnap.data()?.username || 'Anonymous';
+            usernameCache.current.set(p.uid, uname);
+            return { uid: p.uid, username: uname };
+          } catch (e) {
+            return { uid: p.uid, username: 'Anonymous' };
+          }
         })
       );
       setChatPartners(partnerList);
@@ -1101,15 +1160,24 @@ export default function App() {
   const loadShareMetadata = async (id: string) => {
     const path = `shares/${id}`;
     try {
-      const docRef = doc(db, 'shares', id);
-      const docSnap = await getDoc(docRef);
-
       let data: ShareData | null = null;
+      const nodes = [primaryDb, backupDb];
+      
+      // 1. Try Firebase Cluster
+      for (const node of nodes) {
+        try {
+          const docSnap = await getDoc(doc(node, 'shares', id));
+          if (docSnap.exists()) {
+            data = docSnap.data() as ShareData;
+            break;
+          }
+        } catch (e) {
+          console.warn("Node metadata fetch delay...");
+        }
+      }
 
-      if (docSnap.exists()) {
-        data = docSnap.data() as ShareData;
-      } else if (isSupabaseReady() && supabase) {
-        // Fallback: Check Supabase
+      // 2. Try Supabase Fallback
+      if (!data && isSupabaseReady() && supabase) {
         const { data: sbData } = await supabase
           .from('shares')
           .select('*')
@@ -1127,9 +1195,13 @@ export default function App() {
 
         if (isDirect && data.ownerId) {
           try {
-            const senderSnap = await getDoc(doc(db, 'users', data.ownerId));
-            if (senderSnap.exists()) {
-              senderHandle = senderSnap.data().username || 'UNKNOWN';
+            // Check both for sender profile
+            for (const node of nodes) {
+              const senderSnap = await getDoc(doc(node, 'users', data.ownerId));
+              if (senderSnap.exists()) {
+                senderHandle = senderSnap.data().username || 'UNKNOWN';
+                break;
+              }
             }
           } catch (e) {
             console.warn("Could not resolve sender handle:", e);
@@ -1140,14 +1212,11 @@ export default function App() {
         setTargetShare(data);
         setView('download');
       } else {
-        setError('Share not found on any active node. It may have expired.');
+        setError('Share not found on any active node. It may have expired or was incorrectly indexed.');
       }
     } catch (err) {
       console.error(err);
-      if (err instanceof Error && err.message.includes('permissions')) {
-        handleFirestoreError(err, OperationType.GET, path);
-      }
-      setError('Connection to secure node failed.');
+      setError('Connection to secure node failed. Try refreshing the terminal.');
     }
   };
 
@@ -1235,6 +1304,15 @@ export default function App() {
     }
   };
 
+  // Cleanup Blob URLs to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (decryptedFile?.url) {
+        URL.revokeObjectURL(decryptedFile.url);
+      }
+    };
+  }, [decryptedFile]);
+
   const processSecureFile = async (): Promise<{ url: string; name: string; type: string } | null> => {
     if (!targetShare || !secretKey) return null;
 
@@ -1251,10 +1329,11 @@ export default function App() {
           if (snap.exists()) {
             metadata = snap.data();
             const cSnap = await getDocs(collection(node, 'shares', targetShare.id, 'chunks'));
-            // Support both 'index' and 'chunk_index' field names
+            // Support both 'index' and 'chunk_index' field names robustly
             chunksData = cSnap.docs.map(d => {
               const dData = d.data();
-              return { data: dData.data, index: dData.index ?? dData.chunk_index } as ChunkData;
+              const idx = typeof dData.index === 'number' ? dData.index : (typeof dData.chunk_index === 'number' ? dData.chunk_index : 0);
+              return { data: dData.data, index: idx } as ChunkData;
             }).sort((a,b) => a.index - b.index);
             foundOnNode = true;
             break;
@@ -1273,7 +1352,10 @@ export default function App() {
           .order('chunk_index', { ascending: true });
         
         if (sbChunks && sbChunks.length > 0) {
-          chunksData = sbChunks.map(c => ({ data: c.data, index: c.chunk_index }));
+          chunksData = sbChunks.map(c => ({ 
+            data: c.data, 
+            index: typeof c.chunk_index === 'number' ? c.chunk_index : 0 
+          }));
           metadata = targetShare;
           foundOnNode = true;
           setIsBackupActive(true);
@@ -1316,6 +1398,7 @@ export default function App() {
   };
 
   const handlePreview = async () => {
+    setDecryptedFile(null);
     const file = await processSecureFile();
     if (file) {
       setDecryptedFile(file);
@@ -1387,38 +1470,56 @@ export default function App() {
   const sendSecureMessage = async () => {
     if (!profile || !messageRecipient || !messageText) return;
     
+    const textMsg = messageText;
+    const targetUname = messageRecipient.toLowerCase().trim();
+    
     try {
       setIsSendingMessage(true);
       setError(null);
+      
+      // Proactively clear inputs for instant feedback
+      setMessageText('');
 
-      const targetUname = messageRecipient.toLowerCase().trim();
       let recipientUid = null;
 
-      // 1. Try Primary
-      try {
-        const uSnap = await getDoc(doc(primaryDb, 'usernames', targetUname));
-        if (uSnap.exists()) recipientUid = uSnap.data().uid;
-      } catch (e) { console.warn("Primary resolution pending..."); }
+      // Parallel resolution across the cluster
+      const resolutionPromises = [
+        (async () => {
+          try {
+            const s = await getDoc(doc(primaryDb, 'usernames', targetUname));
+            return s.exists() ? s.data().uid : null;
+          } catch { return null; }
+        })(),
+        (async () => {
+          try {
+            const s = await getDoc(doc(backupDb, 'usernames', targetUname));
+            return s.exists() ? s.data().uid : null;
+          } catch { return null; }
+        })()
+      ];
 
-      // 2. Try Backup
+      if (isSupabaseReady() && supabase) {
+        resolutionPromises.push(
+          (async () => {
+            try {
+              const { data } = await supabase.from('usernames').select('uid').eq('username', targetUname).single();
+              return data?.uid || null;
+            } catch { return null; }
+          })()
+        );
+      }
+
+      const results = await Promise.all(resolutionPromises);
+      recipientUid = results.find(uid => uid !== null);
+
       if (!recipientUid) {
-        try {
-          const uSnap = await getDoc(doc(backupDb, 'usernames', targetUname));
-          if (uSnap.exists()) recipientUid = uSnap.data().uid;
-        } catch (e) { console.warn("Backup resolution pending..."); }
+        // If resolution failed, restore text so user doesn't lose it
+        setMessageText(textMsg);
+        throw new Error("Recipient handle not detected in current cluster.");
       }
-
-      // 3. Try Supabase
-      if (!recipientUid && isSupabaseReady() && supabase) {
-        const { data: sbUname } = await supabase.from('usernames').select('uid').eq('username', targetUname).single();
-        if (sbUname) recipientUid = sbUname.uid;
-      }
-
-      if (!recipientUid) throw new Error("Recipient handle not detected in current cluster.");
       
-      await sendChatMessage(recipientUid, messageText);
-
-      setMessageText('');
+      await sendChatMessage(recipientUid, textMsg);
+      
       setMessageRecipient('');
       setError(`[SECURE TRANSMISSION COMPLETE] Message relayed to @${targetUname}`);
       setTimeout(() => setError(null), 5000);
@@ -1459,6 +1560,17 @@ export default function App() {
         ownerId: user.uid,
         isMessage: true
       };
+
+      // Optimistic UI update: Add to local cache and state for instant appearance
+      const optimisticMessage = {
+        id,
+        text,
+        senderId: user.uid,
+        createdAt: Date.now(),
+        isPending: true
+      };
+      decryptedCache.current.set(id, optimisticMessage);
+      setChatMessages(prev => [...prev.filter(m => m.id !== id), optimisticMessage].sort((a,b) => a.createdAt - b.createdAt));
 
       // Primary: Firebase
       try {
@@ -1507,6 +1619,7 @@ export default function App() {
       setError(null);
       setLoading(true);
       setShowInbox(false);
+      setShowChatPanel(false);
       
       // Mark as seen immediately on click
       if (!seenMessageIds.has(share.id)) {
@@ -1517,14 +1630,18 @@ export default function App() {
 
       let key = null;
 
-      // Try Firebase
-      try {
-        const keySnap = await getDoc(doc(db, 'shares', share.id, 'keys', user!.uid));
-        if (keySnap.exists()) {
-           key = keySnap.data()?.key;
+      // Try Firebase Cluster for Key
+      const nodes = [primaryDb, backupDb];
+      for (const node of nodes) {
+        try {
+          const keySnap = await getDoc(doc(node, 'shares', share.id, 'keys', user!.uid));
+          if (keySnap.exists()) {
+            key = keySnap.data()?.key;
+            break;
+          }
+        } catch (e) {
+          console.warn("Node handle fetch delay...");
         }
-      } catch (fbErr) {
-        console.warn("Firebase key fetch failed, trying backup...");
       }
 
       // Try Supabase fallback
@@ -1544,6 +1661,7 @@ export default function App() {
 
       if (!key) throw new Error("Decryption key was not found on any node.");
       
+      setActiveTab('home');
       setSecretKey(key);
       setShareId(share.id);
       
@@ -1562,8 +1680,31 @@ export default function App() {
       if (share.isMessage) {
         // Auto-decrypt message using existing helpers
         setIsDecrypting(true);
-        const chunksSnap = await getDocs(collection(db, 'shares', share.id, 'chunks'));
-        const chunkData = chunksSnap.docs[0].data();
+        let chunkData = null;
+        
+        // Try all nodes for chunks
+        const nodes = [primaryDb, backupDb];
+        for (const node of nodes) {
+          try {
+            const chunksSnap = await getDocs(collection(node, 'shares', share.id, 'chunks'));
+            if (!chunksSnap.empty) {
+              chunkData = chunksSnap.docs[0].data();
+              break;
+            }
+          } catch (e) {
+            console.warn("Node chunk fetch delay...");
+          }
+        }
+
+        if (!chunkData) {
+          // Try Supabase fallback
+          if (isSupabaseReady() && supabase) {
+            const { data } = await supabase.from('chunks').select('data').eq('share_id', share.id).eq('chunk_index', 0).single();
+            if (data) chunkData = data;
+          }
+        }
+
+        if (!chunkData) throw new Error("Secure message fragments were not found on any network node.");
         
         const encryptedBuffer = base64ToArrayBuffer(chunkData.data);
         const decryptedBuffer = await decryptData(encryptedBuffer, share.iv, key);
@@ -1676,14 +1817,16 @@ export default function App() {
     if (!shareId || !secretKey) return;
     try {
       setIsResolvingKey(true);
-      const mappingRef = doc(db, 'custom_keys', customKey);
+      const nodes = [primaryDb, backupDb];
       
-      // Check if key is already in use for another active share
-      const existing = await getDoc(mappingRef);
-      if (existing.exists()) {
-        const data = existing.data();
-        if (data.expiresAt.toMillis() > Date.now()) {
-          throw new Error("Target key is currently bonded to another active transmission.");
+      // 1. Check if key is already in use on any node
+      for (const node of nodes) {
+        const existing = await getDoc(doc(node, 'custom_keys', customKey));
+        if (existing.exists()) {
+          const data = existing.data();
+          if (data.expiresAt.toMillis() > Date.now()) {
+            throw new Error("Target key is currently bonded to another active transmission.");
+          }
         }
       }
 
@@ -1691,18 +1834,22 @@ export default function App() {
                         (targetShare?.expiresAt ? new Date(targetShare.expiresAt) : new Date(Date.now() + 30 * 60 * 1000));
       const expiresAt = Timestamp.fromDate(expiresAtDate);
 
-      // Primary: Firebase
-      try {
-        await setDoc(mappingRef, {
-          shareId,
-          secretKey,
-          expiresAt
-        });
-      } catch (fbErr: any) {
-         console.warn("Firebase key sync failed, continuing with backup map...");
+      // 2. Transmit to Firebase Cluster
+      let fbSuccess = false;
+      for (const node of nodes) {
+        try {
+          await setDoc(doc(node, 'custom_keys', customKey), {
+            shareId,
+            secretKey,
+            expiresAt
+          });
+          fbSuccess = true;
+        } catch (fbErr: any) {
+           console.warn("Node key sync delay...");
+        }
       }
 
-      // Secondary: Supabase (Mandatory Sync if available)
+      // 3. Supabase Relational Sync (Mandatory)
       if (isSupabaseReady() && supabase) {
         await supabase.from('custom_keys').upsert({
           key_id: customKey,
@@ -1710,8 +1857,10 @@ export default function App() {
           secret_key: secretKey,
           expires_at: expiresAtDate.toISOString()
         });
+      } else if (!fbSuccess) {
+        throw new Error("Cluster Synchronization Error: Failed to bind key to any active node.");
       }
-      
+
       setError(`[BOND_SUCCESS] Share mapped to private key: ${customKey}`);
       setTimeout(() => setError(null), 5000);
     } catch (err: any) {
@@ -1727,27 +1876,55 @@ export default function App() {
       setIsResolvingKey(true);
       setError(null);
       
+      const input = entryKey.trim();
       let keyData = null;
 
-      // 1. Try Firebase
+      // 1. Check if input is a full URL instead of just a key
+      if (input.includes('share=') && input.includes('key=')) {
+        try {
+          const url = new URL(input.startsWith('http') ? input : `https://${input}`);
+          const hash = url.hash.substring(1);
+          const params = new URLSearchParams(hash);
+          const id = params.get('share');
+          const key = params.get('key');
+          
+          if (id && key) {
+            const sanitizedKey = key.replace(/ /g, '+');
+            setShareId(id);
+            setSecretKey(sanitizedKey);
+            setEntryKey('');
+            setShowPrivateKeyPanel(false);
+            await loadShareMetadata(id);
+            return;
+          }
+        } catch (e) {
+          console.warn("URL parsing in key extractor failed, falling back to mapping lookup...");
+        }
+      }
+
+      // 2. Try Firebase Cluster Mapping
       try {
-        const mappingSnap = await getDoc(doc(db, 'custom_keys', entryKey));
-        if (mappingSnap.exists()) {
-          const data = mappingSnap.data();
-          if (data.expiresAt.toMillis() >= Date.now()) {
-            keyData = data;
+        const nodes = [primaryDb, backupDb];
+        for (const node of nodes) {
+          const mappingSnap = await getDoc(doc(node, 'custom_keys', input));
+          if (mappingSnap.exists()) {
+            const data = mappingSnap.data();
+            if (data.expiresAt.toMillis() >= Date.now()) {
+              keyData = data;
+              break;
+            }
           }
         }
       } catch (e) {
-        console.warn("Primary key resolution failed...");
+        console.warn("Firebase key resolution failed...");
       }
 
-      // 2. Try Supabase Fallback
+      // 3. Try Supabase Fallback Mapping
       if (!keyData && isSupabaseReady() && supabase) {
         const { data: sbKey } = await supabase
           .from('custom_keys')
           .select('*')
-          .eq('key_id', entryKey)
+          .eq('key_id', input)
           .single();
         
         if (sbKey && new Date(sbKey.expires_at).getTime() >= Date.now()) {
@@ -1825,7 +2002,7 @@ export default function App() {
   }
 
   return (
-    <>
+    <div className="fixed inset-0 flex flex-col bg-bg-base overflow-hidden selection:bg-blue-500/30 transition-colors">
       {/* Private Key Panel Trigger (Left Arrow) */}
       <motion.button
         initial={{ opacity: 0, x: -20 }}
@@ -1923,7 +2100,43 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="min-h-screen bg-bg-base px-2 py-4 md:p-8 selection:bg-blue-500/30 transition-colors overflow-x-hidden">
+      {/* Bottom Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 z-[100] bg-bg-card/80 backdrop-blur-xl border-t border-border-main pb-safe">
+        <div className="max-w-md mx-auto flex justify-around items-center py-3">
+          <button 
+            onClick={() => setActiveTab('home')} 
+            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'home' ? 'text-blue-500 scale-110' : 'text-slate-500 hover:text-slate-400'}`}
+          >
+            <Home className={`w-5 h-5 ${activeTab === 'home' ? 'glow-blue' : ''}`} />
+            <span className="text-[9px] font-sans font-bold uppercase tracking-tight">Home</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('chat')} 
+            className={`flex flex-col items-center gap-1 relative transition-all ${activeTab === 'chat' ? 'text-blue-500 scale-110' : 'text-slate-500 hover:text-slate-400'}`}
+          >
+            <MessageSquare className={`w-5 h-5 ${activeTab === 'chat' ? 'glow-blue' : ''}`} />
+            <span className="text-[9px] font-sans font-bold uppercase tracking-tight">Chat</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('notifications')} 
+            className={`flex flex-col items-center gap-1 relative transition-all ${activeTab === 'notifications' ? 'text-blue-500 scale-110' : 'text-slate-500 hover:text-slate-400'}`}
+          >
+            <Bell className={`w-5 h-5 ${activeTab === 'notifications' ? 'glow-blue' : ''}`} />
+            {inboxCount > 0 && <div className="absolute top-0 right-0 w-2 h-2 bg-blue-500 rounded-full glow-blue" />}
+            <span className="text-[9px] font-sans font-bold uppercase tracking-tight">Signals</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('profile')} 
+            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'profile' ? 'text-blue-500 scale-110' : 'text-slate-500 hover:text-slate-400'}`}
+          >
+            <UserIcon className={`w-5 h-5 ${activeTab === 'profile' ? 'glow-blue' : ''}`} />
+            <span className="text-[9px] font-sans font-bold uppercase tracking-tight">Profile</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-2 py-4 md:p-8 custom-scrollbar">
+        <div className="max-w-md mx-auto">
       {/* GLOBAL_SYSTEM_MONITORING: QUOTA_LOCK_DETECTION */}
       <AnimatePresence>
         {quotaExceeded && (
@@ -1977,158 +2190,130 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 md:gap-4 overflow-hidden">
-          {/* Theme Switcher */}
-          <div className="flex items-center bg-bg-card/40 p-0.5 md:p-1 rounded-lg border border-border-main shrink-0">
-            <button 
-              onClick={() => setTheme('light')}
-              className={`p-1 md:p-1.5 rounded-md transition-all ${theme === 'light' ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-white'}`}
-            >
-              <Sun className="w-3 h-3 md:w-4 md:h-4" />
-            </button>
-            <button 
-              onClick={() => setTheme('dark')}
-              className={`p-1 md:p-1.5 rounded-md transition-all ${theme === 'dark' ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-white'}`}
-            >
-              <Moon className="w-3 h-3 md:w-4 md:h-4" />
-            </button>
-            <button 
-              onClick={() => setTheme('system')}
-              className={`p-1 md:p-1.5 rounded-md transition-all ${theme === 'system' ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-white'}`}
-            >
-              <Monitor className="w-3 h-3 md:w-4 md:h-4" />
-            </button>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+             <div className="w-1.5 h-1.5 rounded-full bg-green-500 glow-green animate-pulse" />
+             <span className="text-[8px] font-mono font-black text-blue-400 uppercase tracking-widest">System_Active</span>
           </div>
-
-          {user && profile && (
-            <button 
-              onClick={() => setShowInbox(!showInbox)}
-              className="relative p-1.5 md:p-2 bg-white/5 hover:bg-white/10 rounded-lg technical-border transition-all shrink-0"
-            >
-              <Bell className={`w-3.5 h-3.5 md:w-5 md:h-5 ${inboxCount > 0 ? 'text-blue-500 animate-pulse' : 'text-slate-500'}`} />
-              {inboxCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-blue-600 text-[8px] md:text-[10px] font-bold rounded-full flex items-center justify-center text-white border-2 border-bg-base">
-                  {inboxCount}
-                </span>
-              )}
-            </button>
-          )}
-
-          {user ? (
-            <div className="flex items-center gap-2 md:gap-3 shrink-0">
-              <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-                <UserIcon className="w-3 h-3 text-blue-500 glow-blue" />
-                <span className="text-xs font-mono font-bold text-blue-400 uppercase tracking-tighter">
-                  {profile?.username ? `@${profile.username}` : (user.email || 'Secure User')}
-                </span>
-              </div>
-              <button 
-                onClick={signOutAll}
-                className="p-1.5 md:p-0 text-text-sub hover:text-text-main transition-colors flex items-center gap-1.5"
-                title="Disconnect from Terminal"
-              >
-                <LogOut className="w-4 h-4 md:hidden" />
-                <span className="hidden md:inline text-xs font-mono uppercase tracking-wider">Disconnect</span>
-              </button>
-              {isAdmin && (
-                <button 
-                  onClick={() => setShowAdmin(!showAdmin)}
-                  className={`flex items-center gap-1.5 transition-all shrink-0 ${showAdmin ? 'text-red-500 animate-pulse' : 'text-slate-500 hover:text-white'}`}
-                  title="System Control Node"
-                >
-                  <Terminal className={`w-4 h-4 p-1 rounded ${showAdmin ? 'bg-red-500/10 border border-red-500/50' : 'bg-white/5 border border-white/10'}`} />
-                  <span className="hidden md:inline text-[10px] font-mono font-black uppercase tracking-widest">SYS_CTRL</span>
-                </button>
-              )}
-            </div>
-          ) : (
-            <button 
-              onClick={handleSignIn}
-              className="text-[10px] md:text-xs font-mono uppercase tracking-wider bg-blue-600 hover:bg-blue-500 active:scale-95 px-3 md:px-4 py-1.5 md:py-2 rounded-md border border-blue-500/50 transition-all text-white whitespace-nowrap shrink-0 shadow-[0_0_15px_rgba(59,130,246,0.2)] active:shadow-[0_0_25px_rgba(59,130,246,0.6)]"
-            >
-              Sign In
-            </button>
-          )}
         </div>
       </nav>
 
-      <main className="max-w-md mx-auto relative cursor-default sm:px-0">
+      <main className="max-w-md mx-auto relative cursor-default sm:px-0 pb-32">
         <AnimatePresence mode="wait">
           
-          {/* Inbox Overlay */}
-          <AnimatePresence>
-            {showInbox && (
-              <motion.div
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                className="fixed top-20 right-4 left-4 sm:left-auto sm:w-80 max-h-[70vh] bg-bg-card border border-border-main rounded-2xl shadow-2xl z-40 overflow-hidden flex flex-col"
-              >
-                  <div className="p-4 border-b border-border-main flex items-center justify-between bg-bg-base/40">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse glow-blue" />
-                      <span className="text-[10px] font-mono font-black uppercase tracking-[0.2em] text-text-main">SECURE_INBOX_v2.1</span>
+          {view === 'download' ? (
+            <motion.div 
+              key="download-view"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[150] bg-bg-base/95 backdrop-blur-md flex flex-col p-4 md:p-8 overflow-y-auto"
+            >
+               <div className="max-w-md mx-auto w-full pt-12">
+              <h2 className="text-lg font-mono font-bold flex items-center gap-2 mb-6 text-text-main">
+                <Unlock className="w-4 h-4 text-blue-500" />
+                SECURE ACCESS
+              </h2>
+
+              {error ? (
+                <div className="flex flex-col items-center text-center p-8 bg-red-500/5 border border-red-500/10 rounded-xl">
+                  <AlertCircle className="w-12 h-12 text-red-500/30 mb-4" />
+                  <h3 className="text-red-400 font-bold mb-2 uppercase">Access_Denied</h3>
+                  <p className="text-xs text-text-sub mb-6">{error}</p>
+                  <button onClick={reset} className="text-xs font-mono uppercase text-text-sub hover:text-text-main underline underline-offset-4">Return Home</button>
+                </div>
+              ) : !targetShare ? (
+                <div className="flex flex-col items-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500/30" />
+                  <p className="mt-4 text-xs font-mono text-text-sub uppercase tracking-widest">Verifying Handshake...</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {targetSenderHandle && (
+                    <div className="flex items-center gap-2 mb-2 p-2 bg-blue-500/5 rounded-lg border border-blue-500/10">
+                      <UserIcon className="w-3 h-3 text-blue-400" />
+                      <span className="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-widest">Relayed by @{targetSenderHandle}</span>
                     </div>
-                    <button onClick={() => setShowInbox(false)} className="w-8 h-8 flex items-center justify-center bg-bg-base/5 hover:bg-bg-base/10 rounded-lg text-text-sub hover:text-text-main transition-all">
-                      <X className="w-4 h-4" />
+                  )}
+                  <div className="flex items-center gap-4 bg-bg-base/30 p-4 rounded-xl border border-border-main">
+                    {getFileIcon(targetShare.mimeType)}
+                    <div className="flex-1 overflow-hidden">
+                      <p className="text-sm font-bold text-text-main truncate">{targetShare.fileName}</p>
+                      <div className="flex items-center gap-2 text-[10px] font-mono text-text-sub uppercase mt-1">
+                        <span>{formatSize(targetShare.size)}</span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-blue-500/50" />
+                          <Countdown 
+                            expiresAt={targetShare.expiresAt} 
+                            onExpire={() => {
+                              setError('This secure share has expired and self-destructed.');
+                              setTargetShare(null);
+                            }}
+                          />
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      disabled={isDecrypting}
+                      onClick={handleDownload}
+                      className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
+                        ${isDecrypting ? 'shadow-[0_0_30px_rgba(59,130,246,0.4)]' : 'shadow-lg shadow-blue-500/10'}
+                      `}
+                    >
+                      {isDecrypting ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Download className="w-3 h-3" />
+                      )}
+                      Decrypt & Download
+                    </button>
+
+                    <button
+                      disabled={isDecrypting}
+                      onClick={handlePreview}
+                      className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
+                        ${isDecrypting ? 'shadow-[0_0_30px_rgba(59,130,246,0.4)]' : 'shadow-lg shadow-blue-500/20'}
+                      `}
+                    >
+                      {isDecrypting ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Eye className="w-3 h-3" />
+                      )}
+                      Decrypt & View
                     </button>
                   </div>
-                
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                  {activeInboxShares.length === 0 ? (
-                    <div className="py-12 text-center">
-                      <Shield className="w-8 h-8 text-text-sub/30 mx-auto mb-3" />
-                      <p className="text-[10px] font-mono text-text-sub uppercase tracking-widest">No direct fragments found.</p>
-                    </div>
-                  ) : (
-                    activeInboxShares.map(share => (
-                      <button
-                        key={share.id}
-                        onClick={() => handleInboxItemClick(share)}
-                        className="w-full p-3 bg-white/5 hover:bg-white/10 rounded-xl technical-border text-left transition-all group"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-lg ${share.isMessage ? 'bg-purple-500/10' : 'bg-blue-500/10'}`}>
-                            {share.isMessage ? (
-                              <Mail className="w-4 h-4 text-purple-400" />
-                            ) : (
-                              getFileIcon(share.mimeType)
-                            )}
-                          </div>
-                          <div className="flex-1 overflow-hidden">
-                            <p className={`text-[10px] font-bold truncate group-hover:text-blue-400 transition-colors uppercase ${share.isMessage ? 'text-purple-400' : 'text-text-main'}`}>
-                              {share.isMessage ? 'Secure Message' : share.fileName}
-                            </p>
-                            <p className="text-[8px] font-mono text-slate-500 mt-1 uppercase">
-                              {share.isMessage ? 'Encrypted Text' : formatSize(share.size)} • <Countdown expiresAt={share.expiresAt} />
-                            </p>
-                            {share.senderHandle && (
-                              <div className="mt-1 flex items-center gap-1">
-                                <span className="text-[7px] text-blue-500/60 font-black uppercase">From:</span>
-                                <span className="text-[7px] text-blue-400 font-bold">@{share.senderHandle}</span>
-                              </div>
-                            )}
-                          </div>
-                          {share.isMessage ? (
-                            <Mail className="w-3 h-3 text-slate-700 group-hover:text-purple-500 transition-colors" />
-                          ) : (
-                            <Download className="w-3 h-3 text-slate-700 group-hover:text-blue-500 transition-colors" />
-                          )}
-                        </div>
-                      </button>
-                    ))
-                  )}
-                </div>
-                
-                <div className="p-3 bg-bg-base/40 border-t border-border-main">
-                  <p className="text-[8px] font-mono text-text-sub text-center uppercase tracking-tighter">
-                    Direct shares are stored with secondary keys bound to your identity.
-                  </p>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
 
+                  <div className="p-4 bg-blue-500/5 rounded-lg border border-blue-500/10 flex items-start gap-3">
+                    <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                    <p className="text-[10px] text-blue-400/80 leading-relaxed italic">
+                      This file was decrypted locally in your browser range. The server only provided the encrypted blob; the key was extracted from your private URL fragment.
+                    </p>
+                  </div>
+                </div>
+              )}
+               <button 
+                  onClick={reset}
+                  className="mt-8 w-full py-4 text-slate-500 hover:text-blue-400 font-mono text-[9px] uppercase tracking-widest border border-dashed border-border-main rounded-xl transition-all"
+               >
+                  Cancel Extraction
+               </button>
+            </div>
+          </motion.div>
+          ) : activeTab === 'home' ? (
+            <motion.div
+              key="home-tab"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <AnimatePresence mode="wait">
+          
           {/* Setup Profile View */}
           {view === 'setup-profile' && (
             <motion.div 
@@ -2207,9 +2392,9 @@ export default function App() {
                   <div className="pt-6 pl-2 sm:pl-6">
                     <div className="flex items-center gap-3 mb-2">
                       <span className="text-[10px] font-black text-blue-500/50 font-mono">01 //</span>
-                      <h2 className="text-2xl sm:text-3xl font-mono font-black text-text-main uppercase tracking-tighter">Access Terminal</h2>
+                      <h2 className="text-2xl sm:text-3xl font-sans font-black text-text-main uppercase tracking-tight leading-none">Access Terminal</h2>
                     </div>
-                    <p className="text-[10px] text-text-sub uppercase tracking-[0.3em] font-bold">Select required operational mode</p>
+                    <p className="text-[10px] text-text-sub uppercase tracking-widest font-medium opacity-60">Select required operational mode</p>
                   </div>
                 </div>
 
@@ -2224,8 +2409,8 @@ export default function App() {
                           <span className="text-[8px] font-black text-blue-500 font-mono">OP_TYPE: DEPOSIT</span>
                           <div className="w-1 h-1 rounded-full bg-blue-500 glow-blue animate-pulse" />
                         </div>
-                        <h3 className="font-mono font-black text-lg sm:text-xl leading-none text-text-main tracking-widest uppercase mb-1">Deposit Data</h3>
-                        <p className="text-[9px] uppercase font-mono tracking-[0.2em] text-text-sub">Encrypt & Store Secure Fragments</p>
+                        <h3 className="font-sans font-black text-lg sm:text-xl leading-none text-text-main tracking-tight uppercase mb-1">Deposit Data</h3>
+                        <p className="text-[9px] uppercase font-sans font-bold tracking-widest text-text-sub">Encrypt & Store Secure Fragments</p>
                       </div>
                       <div className="relative">
                         <div className="absolute inset-0 bg-blue-500/10 blur-xl group-hover:opacity-100 opacity-0 transition-opacity" />
@@ -2262,75 +2447,7 @@ export default function App() {
                     </div>
                   </div>
 
-                    <div className="bg-blue-500/5 p-3 sm:p-6 rounded-xl border border-blue-500/10 text-left">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-                        <h3 className="font-mono font-bold text-base sm:text-lg leading-none uppercase flex items-center gap-2">
-                           <Mail className="w-4 h-4 text-blue-400" />
-                           Quantum Message
-                        </h3>
-                        <button 
-                          onClick={() => setShowChatPanel(true)}
-                          className="px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/20 rounded-lg text-[9px] font-mono font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
-                        >
-                          <Send className="w-3 h-3" />
-                          Secure Chats
-                        </button>
-                      </div>
-                    <div className="space-y-3">
-                      <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                          <AtSign className="w-3 h-3 text-blue-500/40" />
-                        </div>
-                        <input 
-                          type="text"
-                          placeholder="Recipient handle..."
-                          value={messageRecipient}
-                          onChange={(e) => setMessageRecipient(e.target.value)}
-                          className="w-full bg-bg-base/40 border border-border-main focus:border-blue-500/30 rounded-lg py-2 pl-9 pr-3 text-[10px] font-mono text-text-main placeholder:text-text-sub outline-none transition-all"
-                        />
-                      </div>
-                      <textarea 
-                        placeholder="Type secure message (Encrypted locally)..."
-                        value={messageText}
-                        onChange={(e) => setMessageText(e.target.value)}
-                        rows={3}
-                        className="w-full bg-bg-base/40 border border-border-main focus:border-blue-500/30 rounded-lg p-3 text-[10px] font-mono text-text-main placeholder:text-text-sub outline-none transition-all resize-none"
-                      />
-                      <button 
-                        disabled={isSendingMessage || !messageRecipient || !messageText || quotaExceeded}
-                        onClick={sendSecureMessage}
-                        className="w-full btn-primary py-4 rounded-xl text-[11px] font-mono font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(59,130,246,0.1)] active-glow"
-                      >
-                        {isSendingMessage ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Send className="w-4 h-4" />
-                        )}
-                        Relay Secure Message
-                      </button>
-                    </div>
-                  </div>
                 </div>
-
-                {isAdmin && showAdmin && (
-                  <AdminDashboard 
-                onPrune={pruneExpired} 
-                quotaExceeded={quotaExceeded}
-              />
-                )}
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { label: "AES-256-GCM", icon: Shield },
-                  { label: "ZERO-K_RELAY", icon: Lock },
-                  { label: "RESILIENCY_UP", icon: Zap }
-                ].map((item, idx) => (
-                  <div key={idx} className="bg-bg-base/40 border border-border-main p-4 rounded-xl flex flex-col items-center gap-2 technical-border group hover:border-blue-500/30 transition-all">
-                    <item.icon className="w-4 h-4 text-text-sub group-hover:text-blue-500 group-hover:glow-blue transition-all" />
-                    <span className="text-[7px] font-mono font-black uppercase tracking-[0.3em] text-text-sub group-hover:text-blue-400 transition-colors">{item.label}</span>
-                  </div>
-                ))}
               </div>
             </motion.div>
           )}
@@ -2609,6 +2726,7 @@ export default function App() {
                       <span className="text-[8px] font-mono text-blue-500/60 uppercase">{(profile.privateKeys?.length || 0)}/5 Regs</span>
                     )}
                   </div>
+                  <p className="text-[9px] text-text-sub mb-3 font-mono leading-tight">Bonding allows you to use your personal key signature for manual retrieval in the Key_Extractor sidebar.</p>
 
                   {!profile ? (
                     <div className="p-4 bg-blue-500/5 rounded-xl border border-blue-500/10 text-center">
@@ -2708,156 +2826,423 @@ export default function App() {
               </div>
             </motion.div>
           )}
-
-          {/* Download View */}
-          {view === 'download' && (
-            <motion.div 
-              key="download"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-bg-card p-6 rounded-xl technical-border"
+        </AnimatePresence>
+      </motion.div>
+    ) : activeTab === 'chat' ? (
+            <motion.div
+              key="chat-tab"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="space-y-6 pb-24"
             >
-              <h2 className="text-lg font-mono font-bold flex items-center gap-2 mb-6 text-text-main">
-                <Unlock className="w-4 h-4 text-blue-500" />
-                SECURE ACCESS
-              </h2>
+              {/* Message Sending Section */}
+              <div className="bg-bg-card border border-border-main rounded-2xl overflow-hidden shadow-xl p-6">
+                <div className="flex items-center justify-between gap-3 mb-6">
+                  <h3 className="font-sans font-black text-lg uppercase flex items-center gap-2 text-text-main">
+                     <Mail className="w-5 h-5 text-blue-500 glow-blue" />
+                     Quantum relay
+                  </h3>
+                  <button 
+                    onClick={() => setShowChatPanel(true)}
+                    className="p-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 rounded-lg transition-all border border-blue-500/20"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                  </button>
+                </div>
+                
+                <div className="space-y-3">
+                  <div className="relative">
+                    <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-500/40" />
+                    <input 
+                      type="text" 
+                      placeholder="Recipient username..."
+                      value={messageRecipient}
+                      onChange={(e) => setMessageRecipient(e.target.value)}
+                      className="w-full bg-bg-base/40 border border-border-main focus:border-blue-400/40 rounded-xl py-3 pl-10 pr-4 text-xs font-mono text-text-main placeholder:text-text-sub outline-none transition-all"
+                    />
+                  </div>
+                  <textarea 
+                    placeholder="Type encrypted message..."
+                    value={messageText}
+                    onChange={(e) => setMessageText(e.target.value)}
+                    rows={3}
+                    className="w-full bg-bg-base/40 border border-border-main focus:border-blue-400/40 rounded-xl p-4 text-xs font-mono text-text-main placeholder:text-text-sub outline-none transition-all resize-none"
+                  />
+                  <button 
+                    disabled={isSendingMessage || !messageRecipient || !messageText || quotaExceeded}
+                    onClick={sendSecureMessage}
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-xl text-xs font-mono font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 shadow-lg shadow-blue-500/20 active-glow transition-all"
+                  >
+                    {isSendingMessage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    Broadcast Signal
+                  </button>
+                </div>
+              </div>
 
-              {error ? (
-                <div className="flex flex-col items-center text-center p-8 bg-red-500/5 border border-red-500/10 rounded-xl">
-                  <AlertCircle className="w-12 h-12 text-red-500/30 mb-4" />
-                  <h3 className="text-red-400 font-bold mb-2 uppercase">Access_Denied</h3>
-                  <p className="text-xs text-text-sub mb-6">{error}</p>
-                  <button onClick={reset} className="text-xs font-mono uppercase text-text-sub hover:text-text-main underline underline-offset-4">Return Home</button>
-                </div>
-              ) : !targetShare ? (
-                <div className="flex flex-col items-center py-12">
-                  <Loader2 className="w-8 h-8 animate-spin text-blue-500/30" />
-                  <p className="mt-4 text-xs font-mono text-text-sub uppercase tracking-widest">Verifying Handshake...</p>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {targetSenderHandle && (
-                    <div className="flex items-center gap-2 mb-2 p-2 bg-blue-500/5 rounded-lg border border-blue-500/10">
-                      <UserIcon className="w-3 h-3 text-blue-400" />
-                      <span className="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-widest">Relayed by @{targetSenderHandle}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-4 bg-bg-base/30 p-4 rounded-xl border border-border-main">
-                    {getFileIcon(targetShare.mimeType)}
-                    <div className="flex-1 overflow-hidden">
-                      <p className="text-sm font-bold text-text-main truncate">{targetShare.fileName}</p>
-                      <div className="flex items-center gap-2 text-[10px] font-mono text-text-sub uppercase mt-1">
-                        <span>{formatSize(targetShare.size)}</span>
-                        <span>•</span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-blue-500/50" />
-                          <Countdown 
-                            expiresAt={targetShare.expiresAt} 
-                            onExpire={() => {
-                              setError('This secure share has expired and self-destructed.');
-                              setTargetShare(null);
-                            }}
-                          />
-                        </span>
+              {/* Inbox / Active Channels */}
+              <div className="bg-bg-card border border-border-main rounded-2xl overflow-hidden flex flex-col shadow-xl">
+                 <div className="p-6 border-b border-border-main flex items-center justify-between bg-bg-base/40">
+                    <div className="flex items-center gap-3">
+                      <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse glow-blue" />
+                      <div>
+                        <h2 className="text-sm font-sans font-black uppercase tracking-tight text-text-main">Active_Spectrum</h2>
+                        <p className="text-[8px] font-sans font-medium text-slate-500 uppercase opacity-60">Incoming Relay Nodes</p>
                       </div>
                     </div>
+                    <div className="flex items-center gap-2">
+                       <span className="text-[9px] font-mono text-blue-500 px-2 py-0.5 bg-blue-500/5 rounded border border-blue-500/10 uppercase font-black">{activeInboxShares.length} Active</span>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <button
-                      disabled={isDecrypting}
-                      onClick={handleDownload}
-                      className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
-                        ${isDecrypting ? 'shadow-[0_0_30px_rgba(59,130,246,0.4)]' : 'shadow-lg shadow-blue-500/10'}
-                      `}
-                    >
-                      {isDecrypting ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
+                  <div className="p-4">
+                    <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1 custom-scrollbar">
+                      {activeInboxShares.length === 0 ? (
+                        <div className="py-20 text-center flex flex-col items-center">
+                          <div className="w-12 h-12 rounded-full bg-bg-base/5 flex items-center justify-center mb-4 border border-border-main/50">
+                             <Shield className="w-6 h-6 text-text-sub/20" />
+                          </div>
+                          <p className="text-[10px] font-mono text-text-sub uppercase tracking-widest leading-relaxed">No signals detected<br/><span className="opacity-50">Identity is silent.</span></p>
+                        </div>
                       ) : (
-                        <Download className="w-3 h-3" />
+                        activeInboxShares.map(share => (
+                          <button
+                            key={share.id}
+                            onClick={() => handleInboxItemClick(share)}
+                            className="w-full p-4 bg-bg-base/20 hover:bg-blue-500/5 rounded-xl border border-border-main/40 hover:border-blue-500/30 text-left transition-all group flex items-center gap-4"
+                          >
+                            <div className={`p-3 rounded-xl transition-all ${share.isMessage ? 'bg-purple-500/10 group-hover:bg-purple-500/20' : 'bg-blue-500/10 group-hover:bg-blue-500/20'}`}>
+                              {share.isMessage ? (
+                                <Mail className="w-5 h-5 text-purple-400" />
+                              ) : (
+                                <div className="text-blue-400">
+                                  {getFileIcon(share.mimeType)}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 overflow-hidden">
+                              <div className="flex items-center justify-between mb-1">
+                                <p className={`text-[11px] font-black truncate uppercase tracking-tight ${share.isMessage ? 'text-purple-400' : 'text-text-main'}`}>
+                                  {share.isMessage ? 'Secure Message' : share.fileName}
+                                </p>
+                                <span className="text-[8px] font-mono text-slate-500 uppercase"><Countdown expiresAt={share.expiresAt} /></span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <p className="text-[9px] font-mono text-slate-500 truncate lowercase opacity-70">
+                                  {share.isMessage ? 'Encrypted transmission' : formatSize(share.size)}
+                                </p>
+                                {share.senderHandle && (
+                                  <div className="flex items-center gap-1.5 px-2 py-0.5 bg-blue-500/5 rounded border border-blue-500/10">
+                                    <span className="text-[7px] text-blue-500/60 font-black uppercase">ID:</span>
+                                    <span className="text-[7px] text-blue-400 font-bold group-hover:text-blue-300 transition-colors">@{share.senderHandle}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        ))
                       )}
-                      Decrypt & Download
-                    </button>
-
-                    <button
-                      disabled={isDecrypting}
-                      onClick={handlePreview}
-                      className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
-                        ${isDecrypting ? 'shadow-[0_0_30px_rgba(59,130,246,0.4)]' : 'shadow-lg shadow-blue-500/20'}
-                      `}
-                    >
-                      {isDecrypting ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <Eye className="w-3 h-3" />
-                      )}
-                      Decrypt & View
-                    </button>
+                    </div>
                   </div>
-
-                  <div className="p-4 bg-blue-500/5 rounded-lg border border-blue-500/10 flex items-start gap-3">
-                    <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                    <p className="text-[10px] text-blue-400/80 leading-relaxed italic">
-                      This file was decrypted locally in your browser range. The server only provided the encrypted blob; the key was extracted from your private URL fragment.
-                    </p>
-                  </div>
-                </div>
-              )}
+              </div>
             </motion.div>
-          )}
+          ) : activeTab === 'notifications' ? (
+            <motion.div
+              key="notifications-tab"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="space-y-6 pb-24"
+            >
+              <div className="bg-bg-card border border-border-main rounded-2xl overflow-hidden shadow-xl">
+                 <div className="p-6 border-b border-border-main flex items-center justify-between bg-bg-base/40">
+                    <div className="flex items-center gap-3">
+                      <Bell className="w-5 h-5 text-blue-500 glow-blue" />
+                      <div>
+                        <h2 className="text-sm font-sans font-black uppercase tracking-tight text-text-main">Signal_Log</h2>
+                        <p className="text-[8px] font-sans font-medium text-slate-500 uppercase opacity-60">System Alerts & Intercepts</p>
+                      </div>
+                    </div>
+                    <Activity className="w-4 h-4 text-blue-500/30" />
+                 </div>
 
-        </AnimatePresence>
-        
-        <AnimatePresence>
-          {showPreview && decryptedFile && (
-            <PreviewModal 
-              file={decryptedFile} 
-              onClose={() => setShowPreview(false)} 
-            />
-          )}
-          {decryptedMessage && (
-            <MessageModal 
-              text={decryptedMessage.text}
-              sender={decryptedMessage.sender}
-              onClose={() => setDecryptedMessage(null)} 
-            />
-          )}
-          {showChatPanel && user && (
-            <QuantumChatPanel 
-              onClose={() => setShowChatPanel(false)}
-              partners={chatPartners}
-              activePartnerUID={activeChatUID}
-              activePartnerName={activeChatName}
-              setActivePartner={(uid, name) => {
-                setActiveChatUID(uid);
-                setActiveChatName(name);
-              }}
-              messages={chatMessages}
-              onSendMessage={(text) => sendChatMessage(activeChatUID!, text)}
-              currentUserUID={user.uid}
-            />
-          )}
-        </AnimatePresence>
-        
-        {/* Footer info */}
-        <footer className="mt-16 mb-8 flex flex-col items-center gap-6">
-          <div className="flex flex-col items-center gap-1.5 group">
-            <span className="text-[8px] font-mono text-text-sub uppercase tracking-[0.4em] opacity-50 group-hover:opacity-100 transition-opacity">Designed & Developed by</span>
-            <div className="flex items-center gap-3">
-              <div className="h-[1px] w-4 bg-gradient-to-r from-transparent to-border-main" />
-              <span className="text-sm font-mono font-black text-text-sub tracking-[0.5em] uppercase hover:text-blue-500 transition-colors cursor-default">GM Studio</span>
-              <div className="h-[1px] w-4 bg-gradient-to-l from-transparent to-border-main" />
-            </div>
-          </div>
+                 <div className="p-4 space-y-3">
+                   {inboxShares.length === 0 ? (
+                     <div className="py-24 text-center">
+                        <Wifi className="w-8 h-8 text-text-sub/10 mx-auto mb-4" />
+                        <p className="text-[10px] font-mono text-text-sub uppercase tracking-[0.3em]">No background signals detected</p>
+                     </div>
+                   ) : (
+                     inboxShares.slice(0, 10).map((share, idx) => (
+                       <button 
+                         key={idx} 
+                         onClick={() => handleInboxItemClick(share)}
+                         className="w-full p-4 bg-bg-base/30 hover:bg-blue-500/5 rounded-xl border border-border-main/50 hover:border-blue-500/30 flex items-start gap-4 transition-all text-left group"
+                       >
+                          <div className={`p-2 rounded-lg transition-all ${share.isMessage ? 'bg-purple-500/10 group-hover:bg-purple-500/20' : 'bg-blue-500/10 group-hover:bg-blue-500/20'}`}>
+                             {share.isMessage ? <Mail className="w-3 h-3 text-purple-400" /> : <div className="text-blue-400">{getFileIcon(share.mimeType)}</div>}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                             <p className="text-[10px] font-mono text-text-main uppercase font-black mb-1 truncate">
+                                {share.isMessage ? 'Encrypted Message' : (share.fileName || 'Secure Fragment')}
+                             </p>
+                             <p className="text-[9px] font-mono text-slate-500 uppercase tracking-tighter">
+                                {share.senderHandle ? `From: @${share.senderHandle}` : 'Unknown Relay'} • <Countdown expiresAt={share.expiresAt} />
+                             </p>
+                          </div>
+                       </button>
+                     ))
+                   )}
+                 </div>
 
-          <p className="text-[10px] font-mono text-text-sub uppercase tracking-widest flex items-center justify-center gap-2 opacity-60">
-            <span>AES-256-GCM</span>
-            <span>•</span>
-            <span>End-to-End Encrypted</span>
-          </p>
-        </footer>
-      </main>
+                 <div className="p-4 bg-blue-500/5 border-t border-border-main flex items-center gap-3">
+                    <Shield className="w-4 h-4 text-blue-500/30" />
+                    <p className="text-[9px] font-mono text-slate-500 uppercase leading-tight italic">
+                      Log is wiped automatically upon fragment expiration.
+                    </p>
+                 </div>
+              </div>
+            </motion.div>
+          ) : activeTab === 'profile' ? (
+            <motion.div
+              key="profile-tab"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="space-y-6 pb-24"
+            >
+              <div className="bg-bg-card border border-border-main rounded-2xl overflow-hidden shadow-xl">
+                 <div className="p-8 text-center border-b border-border-main relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
+                    <div className="relative inline-block mb-4">
+                       <div className="w-20 h-20 bg-blue-500/10 rounded-2xl flex items-center justify-center border border-blue-500/20 mx-auto">
+                          <UserIcon className="w-10 h-10 text-blue-500" />
+                       </div>
+                       <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-green-500 rounded-lg flex items-center justify-center border-4 border-bg-card">
+                          <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                       </div>
+                    </div>
+                    <h2 className="text-xl font-mono font-black text-text-main uppercase tracking-widest">{profile?.username ? `@${profile.username}` : (user?.email || 'Guest_User')}</h2>
+                    <p className="text-[10px] font-mono text-slate-500 uppercase mt-1 tracking-[0.2em]">Terminal Rank: {isAdmin ? 'SYS_ADMIN' : 'SECURE_NODE'}</p>
+                 </div>
+
+                 <div className="p-6 space-y-6">
+                    <div>
+                       <label className="text-[10px] font-mono font-black text-text-sub uppercase tracking-widest mb-3 block">Neural Theme Engine</label>
+                        <div className="grid grid-cols-3 gap-3">
+                          {[
+                            { id: 'light', icon: Sun, label: 'BRIGHT' },
+                            { id: 'dark', icon: Moon, label: 'DEEP' },
+                            { id: 'system', icon: Monitor, label: 'AUTO' }
+                          ].map((item) => (
+                            <button
+                              key={item.id}
+                              onClick={() => setTheme(item.id as any)}
+                              className={`flex flex-col items-center gap-2 p-4 rounded-xl border transition-all relative overflow-hidden group ${
+                                theme === item.id 
+                                  ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_25px_rgba(59,130,246,0.4)] scale-105 z-10' 
+                                  : 'bg-bg-base/40 border-border-main text-slate-500 hover:border-blue-500/30'
+                              }`}
+                            >
+                              {theme === item.id && (
+                                <div className="absolute inset-0 bg-gradient-to-br from-blue-400/20 to-transparent animate-shimmer" />
+                              )}
+                              <item.icon className={`w-5 h-5 ${theme === item.id ? 'glow-blue' : 'opacity-60 group-hover:opacity-100'}`} />
+                              <span className="text-[8px] font-mono font-black uppercase tracking-widest">{item.label}</span>
+                            </button>
+                          ))}
+                       </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-border-main space-y-3">
+                       <label className="text-[10px] font-mono font-black text-text-sub uppercase tracking-widest block">Core Protocols</label>
+                       
+                       {isAdmin && (
+                         <button 
+                           onClick={() => setShowAdmin(!showAdmin)}
+                           className={`w-full flex items-center justify-between p-4 border rounded-xl transition-all group mb-1 ${
+                             showAdmin 
+                               ? 'bg-red-500/10 border-red-500/30 text-red-500' 
+                               : 'bg-bg-base/40 border-border-main text-slate-500 hover:border-red-500/30 hover:text-red-400'
+                           }`}
+                         >
+                            <div className="flex items-center gap-3">
+                               <ShieldAlert className={`w-5 h-5 ${showAdmin ? 'glow-red' : 'opacity-60'}`} />
+                               <span className="text-xs font-mono font-black uppercase tracking-widest">Maintenance System</span>
+                            </div>
+                            <div className={`w-2 h-2 rounded-full ${showAdmin ? 'bg-red-500 animate-pulse glow-red' : 'bg-slate-700'}`} />
+                         </button>
+                       )}
+
+                       {isAdmin && showAdmin && (
+                         <div className="mb-4">
+                           <AdminDashboard 
+                             onPrune={pruneExpired} 
+                             quotaExceeded={quotaExceeded}
+                           />
+                         </div>
+                       )}
+                       
+                       {!user ? (
+                         <button 
+                           onClick={handleSignIn}
+                           className="w-full flex items-center justify-between p-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-lg shadow-blue-600/20 group active-glow"
+                         >
+                            <div className="flex items-center gap-3">
+                               <Key className="w-5 h-5" />
+                               <span className="text-xs font-mono font-black uppercase tracking-widest">Sign Up / Sign In</span>
+                            </div>
+                            <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                         </button>
+                       ) : (
+                         <button 
+                           onClick={signOutAll}
+                           className="w-full flex items-center justify-between p-4 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 rounded-xl transition-all group"
+                         >
+                            <div className="flex items-center gap-3">
+                               <LogOut className="w-5 h-5" />
+                               <span className="text-xs font-mono font-black uppercase tracking-widest">Disconnect Session</span>
+                            </div>
+                            <Trash2 className="w-4 h-4 text-red-500/50 group-hover:text-red-500 transition-colors" />
+                         </button>
+                       )}
+                    </div>
+                 </div>
+                 
+                 <div className="p-4 bg-bg-base/40 text-center border-t border-border-main">
+                    <p className="text-[8px] font-mono text-slate-600 uppercase tracking-widest">Session ID: {user?.uid?.substring(0, 12).toUpperCase() || 'UNAUTHENTICATED'}</p>
+                 </div>
+              </div>
+
+              {/* About Section */}
+              <div className="bg-bg-card border border-border-main rounded-2xl overflow-hidden shadow-xl mt-6 relative">
+                 <div className="scanning scanline opacity-10" />
+                 <div className="p-6 border-b border-border-main bg-bg-base/20">
+                    <div className="flex items-center gap-3">
+                       <div className="p-2 bg-blue-500/10 rounded-lg">
+                          <Info className="w-4 h-4 text-blue-500" />
+                       </div>
+                       <div>
+                          <h2 className="text-sm font-sans font-black uppercase tracking-tight text-text-main">About Protocol</h2>
+                          <p className="text-[8px] font-sans font-medium text-slate-500 uppercase opacity-60">System Information & Origin</p>
+                       </div>
+                    </div>
+                 </div>
+
+                 <div className="p-6 space-y-6">
+                    {/* Move the Status Cards here */}
+                    <div className="grid grid-cols-3 gap-2">
+                       {[
+                         { label: "AES-256-GCM", icon: Shield },
+                         { label: "ZERO-K_RELAY", icon: Lock },
+                         { label: "RESILIENCY_UP", icon: Zap }
+                       ].map((item, idx) => (
+                         <div key={idx} className="bg-bg-base/40 border border-border-main p-3 rounded-xl flex flex-col items-center gap-2 technical-border group transition-all">
+                           <item.icon className="w-4 h-4 text-blue-500/40 group-hover:text-blue-500 glow-blue transition-all" />
+                           <span className="text-[6px] font-mono font-black uppercase tracking-[0.2em] text-text-sub group-hover:text-blue-400 transition-colors text-center leading-tight">{item.label}</span>
+                         </div>
+                       ))}
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 bg-bg-base/30 rounded-xl border border-border-main/50">
+                       <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">Developer</span>
+                       <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 bg-blue-500/20 rounded flex items-center justify-center">
+                             <Terminal className="w-2.5 h-2.5 text-blue-500" />
+                          </div>
+                          <span className="text-[10px] font-sans font-black text-text-main uppercase">GM Studio</span>
+                       </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                       <div className="p-3 bg-bg-base/30 rounded-xl border border-border-main/50">
+                          <span className="text-[8px] font-mono text-slate-600 uppercase block mb-1 text-[7px]">Architecture</span>
+                          <span className="text-[9px] font-sans font-bold text-text-main uppercase">Zero-Knowledge</span>
+                       </div>
+                       <div className="p-3 bg-bg-base/30 rounded-xl border border-border-main/50">
+                          <span className="text-[8px] font-mono text-slate-600 uppercase block mb-1 text-[7px]">Standard</span>
+                          <span className="text-[9px] font-sans font-bold text-text-main uppercase">AES-256-GCM</span>
+                       </div>
+                    </div>
+
+                    <div className="p-4 bg-blue-500/5 rounded-xl border border-blue-500/10">
+                       <p className="text-[10px] font-sans text-slate-500 italic leading-relaxed text-center">
+                         "Empowering digital sovereignty through mathematical certainty. Every bit of data is encrypted locally before it ever touches our network."
+                       </p>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-6 pt-2 border-t border-border-main/30 mt-2 pb-4">
+                       <div className="flex flex-col items-center gap-1">
+                          <span className="text-[8px] font-mono text-slate-600 uppercase">Version</span>
+                          <span className="text-[9px] font-sans font-black text-blue-500">2.4.0-STABLE</span>
+                       </div>
+                       <div className="flex flex-col items-center gap-1">
+                          <span className="text-[8px] font-mono text-slate-600 uppercase">Status</span>
+                          <div className="flex items-center gap-1.5">
+                             <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                             <span className="text-[9px] font-sans font-black text-green-500">NOMINAL</span>
+                          </div>
+                       </div>
+                    </div>
+
+                    {/* Developer Branding Footer inside About */}
+                    <div className="flex flex-col items-center gap-3 pt-6 border-t border-border-main/30">
+                       <div className="flex flex-col items-center gap-1.5 group">
+                          <span className="text-[7px] font-mono text-slate-500 uppercase tracking-[0.4em] opacity-40">Designed & Developed by</span>
+                          <div className="flex items-center gap-3">
+                             <div className="h-[1px] w-6 bg-gradient-to-r from-transparent to-border-main" />
+                             <span className="text-xs font-mono font-black text-slate-400 tracking-[0.4em] uppercase hover:text-blue-500 transition-colors cursor-default">GM Studio</span>
+                             <div className="h-[1px] w-6 bg-gradient-to-l from-transparent to-border-main" />
+                          </div>
+                       </div>
+                       <p className="text-[8px] font-mono text-slate-600 uppercase tracking-widest flex items-center justify-center gap-2 opacity-50">
+                          <span>AES-256-GCM</span>
+                          <span>•</span>
+                          <span>End-to-End Encrypted</span>
+                       </p>
+                    </div>
+                 </div>
+              </div>
+            </motion.div>
+          ) : (
+            <div key="fallback-empty" />
+          )}
+      </AnimatePresence>
+    </main>
+        </div>
       </div>
-    </>
+      
+      {/* Real-time Modals Group */}
+      <AnimatePresence>
+        {showPreview && decryptedFile && (
+          <PreviewModal 
+            file={decryptedFile} 
+            onClose={() => setShowPreview(false)} 
+          />
+        )}
+        {decryptedMessage && (
+          <MessageModal 
+            text={decryptedMessage.text}
+            sender={decryptedMessage.sender}
+            onClose={() => setDecryptedMessage(null)} 
+          />
+        )}
+        {showChatPanel && user && (
+          <QuantumChatPanel 
+            onClose={() => setShowChatPanel(false)}
+            partners={chatPartners}
+            activePartnerUID={activeChatUID}
+            activePartnerName={activeChatName}
+            setActivePartner={(uid, name) => {
+              setActiveChatUID(uid);
+              setActiveChatName(name);
+            }}
+            messages={chatMessages}
+            onSendMessage={(text) => sendChatMessage(activeChatUID!, text)}
+            currentUserUID={user.uid}
+          />
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

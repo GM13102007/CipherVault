@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, CACHE_SIZE_UNLIMITED } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 // Both configs for failover
@@ -10,12 +10,16 @@ import backupConfig from '../firebase-applet-config.json';
 // Initialize Primary Node
 const primaryApp = initializeApp(primaryConfig, 'primary');
 export const primaryAuth = getAuth(primaryApp);
-export const primaryDb = getFirestore(primaryApp, primaryConfig.firestoreDatabaseId || "(default)");
+export const primaryDb = initializeFirestore(primaryApp, {
+  experimentalForceLongPolling: true,
+}, primaryConfig.firestoreDatabaseId || "(default)");
 
 // Initialize Backup Node (Cipher Vault)
 const backupApp = initializeApp(backupConfig, 'backup');
 export const backupAuth = getAuth(backupApp);
-export const backupDb = getFirestore(backupApp, backupConfig.firestoreDatabaseId || "(default)");
+export const backupDb = initializeFirestore(backupApp, {
+  experimentalForceLongPolling: true,
+}, backupConfig.firestoreDatabaseId || "(default)");
 
 // Exports for backward compatibility (defaults to primary)
 export const auth = primaryAuth;

@@ -47,7 +47,8 @@ import {
   LogOut,
   Edit,
   Home,
-  MessageSquare
+  MessageSquare,
+  History as HistoryIcon
 } from 'lucide-react';
 import { 
   doc, 

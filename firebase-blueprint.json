@@ -1,0 +1,107 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile with a unique username.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username"]
+    },
+    "Username": {
+      "title": "Username Registry",
+      "description": "Ensures username uniqueness and maps to UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" }
+      },
+      "required": ["uid"]
+    },
+    "Share": {
+      "title": "Encrypted Share",
+      "description": "Represents the metadata of an encrypted share.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "iv": { "type": "string" },
+        "fileName": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "size": { "type": "number" },
+        "chunkCount": { "type": "number", "description": "Number of 1MB chunks in the sub-collection." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "ownerId": { "type": "string" },
+        "views": { "type": "number", "description": "Number of times this share has been accessed or decrypted." },
+        "allowView": { "type": "boolean", "default": true, "description": "Whether recipients are permitted to view the file content directly in-app." },
+        "allowDownload": { "type": "boolean", "default": true, "description": "Whether recipients are permitted to download the file directly." },
+        "recipientIds": { "type": "array", "items": { "type": "string" }, "description": "List of UIDs who received this share directly." }
+      },
+      "required": ["iv", "chunkCount", "createdAt", "expiresAt"]
+    },
+    "ShareKey": {
+      "title": "Exchange Key",
+      "description": "Individual key stored for a specific recipient (for Direct Share).",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "description": "The decryption key." }
+      },
+      "required": ["key"]
+    },
+    "Chunk": {
+      "title": "Data Chunk",
+      "description": "A 1MB chunk of encrypted data.",
+      "type": "object",
+      "properties": {
+        "data": { "type": "string", "description": "Base64 encoded encrypted chunk." },
+        "index": { "type": "number", "description": "Order of the chunk." }
+      },
+      "required": ["data", "index"]
+    },
+    "TypingIndicator": {
+      "title": "Typing Indicator",
+      "description": "Indicates typing status between nodes.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "typingTo": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "typingTo", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/typing_indicators/{indicatorId}": {
+      "schema": "TypingIndicator",
+      "description": "Active node typing status to prevent information leak."
+    },
+    "/shares/{shareId}": {
+      "schema": "Share",
+      "description": "Top-level metadata."
+    },
+    "/shares/{shareId}/chunks/{chunkId}": {
+      "schema": "Chunk",
+      "description": "Encrypted file pieces."
+    },
+    "/shares/{shareId}/keys/{userId}": {
+      "schema": "ShareKey",
+      "description": "Exchange keys for direct shares."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and terminal key registries."
+    },
+    "/usernames/{username}": {
+      "schema": "Username",
+      "description": "Handle lookup registry."
+    },
+    "/custom_keys/{keyId}": {
+      "schema": "object",
+      "description": "Terminal key to share mappings."
+    }
+  }
+}

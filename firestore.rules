@@ -1,0 +1,126 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // --- User Profiles ---
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && 
+        incoming().uid == userId && 
+        incoming().username is string &&
+        incoming().username.size() >= 3 &&
+        incoming().username.size() <= 20;
+      allow update: if isOwner(userId) && 
+        incoming().uid == userId &&
+        incoming().username == existing().username;
+    }
+
+    match /usernames/{username} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && 
+        incoming().uid == request.auth.uid &&
+        isValidId(username);
+    }
+
+    // --- Shares & Chunks ---
+    match /shares/{shareId} {
+      allow read: if (
+        existing().recipientIds == [] || 
+        (isSignedIn() && (request.auth.uid in existing().recipientIds || existing().ownerId == request.auth.uid)) ||
+        (isSignedIn() && request.auth.token.email == 'transferd001@gmail.com' && request.auth.token.email_verified == true) ||
+        (existing().expiresAt < request.time)
+      );
+      
+      allow create: if (
+        incoming().ownerId == null ||
+        (isSignedIn() && incoming().ownerId == request.auth.uid)
+      ) && 
+      incoming().chunkCount is number &&
+      incoming().chunkCount > 0 &&
+      incoming().chunkCount <= 20; // 20MB limit for safety
+      
+      allow update: if (
+        (isOwner(existing().ownerId) && incoming().diff(existing()).affectedKeys().hasOnly(['recipientIds'])) ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['views']) && 
+         (incoming().views is int || incoming().views is number) && 
+         incoming().views == (existing().get('views', 0) + 1))
+      );
+
+      allow delete: if isOwner(existing().ownerId) || 
+        (isSignedIn() && request.auth.token.email == 'transferd001@gmail.com' && request.auth.token.email_verified == true) ||
+        (existing().expiresAt < request.time);
+      
+      // Chunks
+      match /chunks/{chunkId} {
+        allow read: if (
+          get(/databases/$(database)/documents/shares/$(shareId)).data.recipientIds == [] || 
+          (isSignedIn() && (request.auth.uid in get(/databases/$(database)/documents/shares/$(shareId)).data.recipientIds || 
+          get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid)) ||
+          (isSignedIn() && request.auth.token.email == 'transferd001@gmail.com' && request.auth.token.email_verified == true) ||
+          (get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt < request.time)
+        );
+        allow create: if (
+          getAfter(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == null ||
+          (isSignedIn() && getAfter(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid)
+        );
+        allow delete: if isSignedIn() || 
+          (get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt < request.time);
+      }
+
+      // Keys
+      match /keys/{userId} {
+        allow read: if isOwner(userId) || 
+          (isSignedIn() && get(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid) ||
+          (isSignedIn() && request.auth.token.email == 'transferd001@gmail.com' && request.auth.token.email_verified == true) ||
+          (get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt < request.time);
+        allow create: if (
+          getAfter(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == null ||
+          (isSignedIn() && getAfter(/databases/$(database)/documents/shares/$(shareId)).data.ownerId == request.auth.uid)
+        );
+        allow delete: if isSignedIn() || 
+          (get(/databases/$(database)/documents/shares/$(shareId)).data.expiresAt < request.time);
+      }
+    }
+
+    // Custom Keys
+    match /custom_keys/{keyId} {
+      allow read: if true; // Public access for key retrieval
+      allow create, update, delete: if true; 
+    }
+
+    // --- Typing Indicators ---
+    match /typing_indicators/{indicatorId} {
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        resource.data.typingTo == request.auth.uid
+      );
+      allow create: if isSignedIn() && 
+        incoming().userId == request.auth.uid && 
+        incoming().typingTo is string && 
+        incoming().updatedAt is timestamp;
+      allow update: if isSignedIn() && 
+        existing().userId == request.auth.uid &&
+        incoming().userId == request.auth.uid &&
+        incoming().typingTo == existing().typingTo &&
+        incoming().updatedAt is timestamp;
+      allow delete: if isSignedIn() && 
+        existing().userId == request.auth.uid;
+    }
+
+    // Health check endpoint
+    match /_health/{any} {
+      allow read: if true;
+    }
+  }
+}

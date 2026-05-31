@@ -91,7 +91,7 @@ import {
   and,
   getDocFromServer
 } from 'firebase/firestore';
-import { auth, db, signInAll, signOutAll } from './firebase';
+import { auth, db, signInAll, signOutAll, signInAnonymous } from './firebase';
 import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { encryptData, decryptData, arrayBufferToBase64, base64ToArrayBuffer, generateId } from './lib/crypto';
 import { handleFirestoreError, OperationType } from './lib/errorHandlers';
@@ -1514,6 +1514,9 @@ function QuantumChatPanel({
 
   const startRecording = async () => {
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Microphone access is unavailable. Ensure you are visiting via a secure HTTPS connection and that you have granted microphone permission in your browser.");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
       const mediaRecorder = new MediaRecorder(stream);
@@ -3041,6 +3044,15 @@ export default function App() {
       await signInAll();
     } catch (err: any) {
       setError(err.message);
+    }
+  };
+
+  const handleSignInAnonymous = async () => {
+    try {
+      setError(null);
+      await signInAnonymous();
+    } catch (err: any) {
+      setError(`Guest Login issues: ${err.message}. If Firebase Auth Anonymous sign-in is disabled, please enable it in your Firebase console or try again.`);
     }
   };
 
@@ -5175,8 +5187,9 @@ export default function App() {
                        )}
                        
                        {!user ? (
-                         <button 
-                           onClick={handleSignIn}
+                         <div className="space-y-3 w-full">
+                           <button 
+                             onClick={handleSignIn}
                            className="w-full flex items-center justify-between p-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-lg shadow-blue-600/20 group active-glow"
                          >
                             <div className="flex items-center gap-3">
@@ -5185,6 +5198,21 @@ export default function App() {
                             </div>
                             <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                          </button>
+                         <button 
+                           type="button"
+                           onClick={handleSignInAnonymous}
+                           className="w-full flex items-center justify-between p-4 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/50 text-slate-300 rounded-xl transition-all group active-glow"
+                         >
+                            <div className="flex items-center gap-3">
+                               <UserIcon className="w-5 h-5 text-blue-400" />
+                               <span className="text-xs font-mono font-black uppercase tracking-widest text-left">Sign In as Guest (Demo)</span>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-slate-500 group-hover:translate-x-1 transition-transform" />
+                         </button>
+                         <p className="text-[9.5px] text-slate-500 text-center font-mono lowercase pt-1">
+                           *use guest login if Google authentication popup is blocked or fails on your mobile.
+                         </p>
+                       </div>
                        ) : (
                          <button 
                            onClick={signOutAll}

@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously } from 'firebase/auth';
 import { initializeFirestore } from 'firebase/firestore';
 
 // Main applet config
@@ -17,6 +17,10 @@ export const googleProvider = new GoogleAuthProvider();
 
 export const signInAll = async () => {
   return await signInWithPopup(auth, googleProvider);
+};
+
+export const signInAnonymous = async () => {
+  return await signInAnonymously(auth);
 };
 
 export const signOutAll = async () => {

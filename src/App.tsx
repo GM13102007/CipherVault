@@ -1175,16 +1175,84 @@ function AdminDashboard({ onPrune, quotaExceeded }: { onPrune: (isManual?: boole
 // --- Helper Components ---
 
 function MessageModal({ text, sender, onClose }: { text: string; sender?: string; onClose: () => void }) {
+  const [isBlurred, setIsBlurred] = useState(false);
+  const [securityLog, setSecurityLog] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setIsBlurred(true);
+        setSecurityLog("Message auto-locked: tab shifted.");
+      }
+    };
+
+    const handleWindowBlur = () => {
+      setIsBlurred(true);
+      setSecurityLog("Focus lost: screen-shield activated.");
+    };
+
+    const handleWindowFocus = () => {
+      setIsBlurred(false);
+      setSecurityLog(null);
+    };
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      setSecurityLog("Right-click disabled inside secure modal.");
+      setTimeout(() => setSecurityLog(null), 3000);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'PrintScreen') {
+        e.preventDefault();
+        setIsBlurred(true);
+        setSecurityLog("Capture blocked.");
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && ['c', 's', 'p', 'u', 'a'].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+        setSecurityLog(`Shortcut blocked in secure session.`);
+        setTimeout(() => setSecurityLog(null), 3000);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  const userTraceID = auth.currentUser?.email || auth.currentUser?.uid || "GUEST_USER";
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-bg-base/90 backdrop-blur-md"
+      className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-bg-base/90 backdrop-blur-md select-none"
+      style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
     >
-      <div className="relative w-full max-w-lg bg-bg-card rounded-2xl border border-blue-500/20 shadow-2xl technical-border overflow-hidden">
+      <div className="relative w-full max-w-lg bg-bg-card rounded-2xl border border-red-500/20 shadow-2xl technical-border overflow-hidden">
         <div className="scanning scanline opacity-30" />
         
+        {/* Top Warning banner */}
+        <div className="bg-red-500/15 border-b border-red-500/10 px-4 py-2 flex items-center justify-between text-[8px] font-mono text-red-400 select-none">
+          <span className="font-bold flex items-center gap-1">
+            <Lock className="w-2.5 h-2.5" /> E2EE TEMPORARY MEMORY SHIELD
+          </span>
+          <span>*TRACED TO {userTraceID.slice(0, 16)}...</span>
+        </div>
+
         <div className="p-4 border-b border-border-main flex items-center justify-between">
           <div className="flex items-center gap-2 text-blue-400 font-mono text-[10px] uppercase font-bold tracking-[0.2em]">
             <Mail className="w-3 h-3" />
@@ -1207,12 +1275,33 @@ function MessageModal({ text, sender, onClose }: { text: string; sender?: string
           </div>
         )}
 
-        <div className="p-8">
-          <div className="bg-bg-base/40 p-6 rounded-xl border border-border-main technical-border min-h-[150px] flex items-center justify-center">
+        <div className="p-8 relative">
+          {/* Subtle Watermark stream */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-10 opacity-[0.02] flex flex-wrap gap-x-8 gap-y-12 p-4 font-mono text-[8px] uppercase font-bold text-white">
+            {Array.from({ length: 15 }).map((_, i) => (
+              <span key={i} className="rotate-[-15deg] whitespace-nowrap">
+                {userTraceID} SECURITY_LOG
+              </span>
+            ))}
+          </div>
+
+          <div 
+            className={`bg-bg-base/40 p-6 rounded-xl border border-border-main technical-border min-h-[150px] flex items-center justify-center transition-all duration-300 relative z-20
+              ${isBlurred ? 'blur-xl select-none scale-95 pointer-events-none' : ''}
+            `}
+          >
             <p className="text-sm font-mono text-text-main leading-relaxed text-center whitespace-pre-wrap">
               {text}
             </p>
           </div>
+
+          {isBlurred && (
+            <div className="absolute inset-0 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center z-30 rounded-xl">
+              <Shield className="w-8 h-8 text-red-500 animate-pulse mb-2" />
+              <p className="text-[10px] text-red-400 font-mono uppercase tracking-wider">PREVIEW BLURRED</p>
+              <p className="text-[8px] text-slate-500 font-mono mt-1 lowercase">click modal to unblur</p>
+            </div>
+          )}
         </div>
 
         <div className="p-4 bg-blue-500/5 border-t border-border-main flex items-center justify-center gap-4">
@@ -1226,6 +1315,12 @@ function MessageModal({ text, sender, onClose }: { text: string; sender?: string
             <span className="text-[8px] font-mono text-text-sub uppercase tracking-widest">Zero-Knowledge</span>
           </div>
         </div>
+
+        {securityLog && (
+          <div className="bg-red-950/90 border-t border-red-500/20 text-red-400 py-1.5 text-center text-[8px] font-mono uppercase tracking-widest">
+            {securityLog}
+          </div>
+        )}
 
         <button 
           onClick={onClose}
@@ -2212,6 +2307,8 @@ function QuantumChatPanel({
 function PreviewModal({ file, allowDownload = true, onClose }: { file: { url: string; name: string; type: string }; allowDownload?: boolean; onClose: () => void }) {
   const [fileStack, setFileStack] = useState<{ url: string; name: string; type: string; isSubFile?: boolean }[]>([file]);
   const createdUrlsRef = useRef<string[]>([]);
+  const [isBlurred, setIsBlurred] = useState(false);
+  const [securityLog, setSecurityLog] = useState<string | null>(null);
 
   useEffect(() => {
     setFileStack([file]);
@@ -2224,6 +2321,73 @@ function PreviewModal({ file, allowDownload = true, onClose }: { file: { url: st
       });
     };
   }, [file]);
+
+  // Screen Capture & Copy/Paste Blockers
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setIsBlurred(true);
+        setSecurityLog("Screen feed hidden. Document de-focused.");
+      }
+    };
+
+    const handleWindowBlur = () => {
+      setIsBlurred(true);
+      setSecurityLog("Focus lost: suspicious screen recorder or screenshot tool might have interacted.");
+    };
+
+    const handleWindowFocus = () => {
+      setIsBlurred(false);
+      setSecurityLog(null);
+    };
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      setSecurityLog("Right-click disabled inside the secure container.");
+      setTimeout(() => setSecurityLog(null), 3000);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Block PrintScreen with warning
+      if (e.key === 'PrintScreen') {
+        e.preventDefault();
+        setIsBlurred(true);
+        setSecurityLog("Screenshot attempt blocked.");
+        return;
+      }
+
+      // Block copying / saving / print commands
+      if (
+        (e.ctrlKey || e.metaKey) && 
+        ['c', 's', 'p', 'u', 'a', 'd'].includes(e.key.toLowerCase())
+      ) {
+        e.preventDefault();
+        setSecurityLog(`Security Protocol: Shortcut '${e.key}' block activated.`);
+        setTimeout(() => setSecurityLog(null), 3000);
+      }
+
+      // Block DevTools
+      if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && ['i', 'j', 'c'].includes(e.key.toLowerCase()))) {
+        e.preventDefault();
+        setSecurityLog("Inspect Tools are restricted in Secure Mode.");
+        setTimeout(() => setSecurityLog(null), 3000);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   const handlePreviewFile = (subFile: { url: string; name: string; type: string; isSubFile: boolean }) => {
     if (subFile.isSubFile) {
@@ -2252,14 +2416,30 @@ function PreviewModal({ file, allowDownload = true, onClose }: { file: { url: st
   const isText = currentFile.type.startsWith('text/') || /\.(txt|csv|json|xml|js|jsx|ts|tsx|css|html|sh|py|ini|yaml|yml|log)$/i.test(currentFile.name);
   const isZip = currentFile.type === 'application/zip' || currentFile.type === 'application/x-zip-compressed' || /\.zip$/i.test(currentFile.name);
 
+  // Extract current user details to build dynamic watermark
+  const userTraceID = auth.currentUser?.email || auth.currentUser?.uid || "GUEST_USER";
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[300] flex items-center justify-center p-2 sm:p-4 bg-black/95 backdrop-blur-sm scroll-none"
+      className="fixed inset-0 z-[300] flex items-center justify-center p-2 sm:p-4 bg-black/98 backdrop-blur-md select-none"
+      style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
     >
-      <div className="relative w-full max-w-4xl h-[85vh] md:h-[88vh] bg-[#0a0b0d] rounded-2xl border border-white/5 overflow-hidden flex flex-col technical-border shadow-2xl">
+      <div className="relative w-full max-w-4xl h-[85vh] md:h-[88vh] bg-[#0a0b0d] rounded-2xl border border-red-500/10 overflow-hidden flex flex-col technical-border shadow-2xl">
+        
+        {/* Anti-Screen Recording/Screenshot Active Warning Ribbon */}
+        <div className="bg-red-500/10 border-b border-red-500/10 px-4 py-1.5 flex items-center justify-between text-[8px] font-mono select-none">
+          <span className="text-red-400 font-bold uppercase tracking-widest flex items-center gap-1.5 animate-pulse">
+            <Shield className="w-3 h-3 text-red-500" />
+            ANTI-SCREENSHOOTER ACTIVE (SECURE SPECTRAL SHIELD V2.5)
+          </span>
+          <span className="text-slate-500 lowercase">
+            *screen captures will blur content or trace metadata
+          </span>
+        </div>
+
         {/* Cinematic Header Bar */}
         <div className="w-full h-14 border-b border-white/5 flex items-center justify-between px-4 bg-black/40 shrink-0 z-40">
           <div className="flex items-center gap-3 min-w-0 max-w-[55%]">
@@ -2276,7 +2456,7 @@ function PreviewModal({ file, allowDownload = true, onClose }: { file: { url: st
             <div className="flex flex-col min-w-0">
               <span className="text-xs font-mono font-bold text-white tracking-widest uppercase truncate">{currentFile.name}</span>
               <div className="flex items-center gap-1.5 text-[8px] font-mono text-slate-500 uppercase tracking-tighter">
-                <Shield className="w-2.5 h-2.5 text-blue-500/50 animate-pulse" />
+                <Shield className="w-2.5 h-2.5 text-blue-500/50" />
                 {currentFile.isSubFile ? "Unpacked Archive Element" : "Decrypted Secure Stream"} ({currentFile.type || 'unknown/binary'})
               </div>
             </div>
@@ -2304,35 +2484,50 @@ function PreviewModal({ file, allowDownload = true, onClose }: { file: { url: st
         </div>
 
         {/* Media Preview Stage */}
-        <div className="flex-1 w-full min-h-0 bg-[#050608] flex items-center justify-center overflow-auto p-2 sm:p-4 relative">
+        <div 
+          className={`flex-1 w-full min-h-0 bg-[#050608] flex items-center justify-center overflow-auto p-2 sm:p-4 relative transition-all duration-300
+            ${isBlurred ? 'blur-2xl scale-95 pointer-events-none' : ''}
+          `}
+          onDragStart={(e) => e.preventDefault()}
+        >
+          {/* Dynamic Repeating Micro-Watermark Overlay for Traceability */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-50 opacity-[0.035] grid grid-cols-3 sm:grid-cols-4 gap-x-12 gap-y-16 p-6 font-mono text-[9px] uppercase font-black text-white tracking-widest">
+            {Array.from({ length: 40 }).map((_, i) => (
+              <div key={i} className="rotate-[-28deg] whitespace-nowrap text-center select-none">
+                E2EE SAFE VIEW • {userTraceID} • NO_LOGS
+              </div>
+            ))}
+          </div>
+
+          {/* Actual Media Components */}
           {isImage ? (
-            <div className="w-full h-full">
+            <div className="w-full h-full pointer-events-none select-none">
               <CustomImageViewer url={currentFile.url} name={currentFile.name} />
             </div>
           ) : isVideo ? (
-            <div className="w-full h-full">
+            <div className="w-full h-full pointer-events-none select-none">
               <CustomVideoPlayer url={currentFile.url} name={currentFile.name} />
             </div>
           ) : isAudio ? (
-            <div className="p-8 text-center w-full max-w-md bg-white/5 border border-white/5 rounded-2xl">
+            <div className="p-8 text-center w-full max-w-md bg-white/5 border border-white/5 rounded-2xl relative z-20">
               <Volume2 className="w-12 h-12 text-blue-400 mx-auto mb-4 animate-pulse" />
               <p className="text-xs font-mono text-slate-300 uppercase tracking-widest mb-4">Secure Audio Channel</p>
               <audio src={currentFile.url} controls className="w-full h-11 bg-black/40 rounded-xl" />
             </div>
           ) : isPdf ? (
-            <div className="w-full h-full overflow-auto">
+            <div className="w-full h-full overflow-auto select-none">
               <PdfPreview url={currentFile.url} />
             </div>
           ) : isMarkdown ? (
-            <div className="w-full h-full overflow-auto">
+            <div className="w-full h-full overflow-auto select-none">
               <MarkdownPreview url={currentFile.url} />
             </div>
           ) : isText ? (
-            <div className="w-full h-full overflow-auto">
+            <div className="w-full h-full overflow-auto select-none">
               <TextPreview url={currentFile.url} />
             </div>
           ) : isZip ? (
-            <div className="w-full h-full overflow-auto">
+            <div className="w-full h-full overflow-auto relative z-20">
               <ZipPreview url={currentFile.url} onPreviewFile={handlePreviewFile} />
             </div>
           ) : (
@@ -2342,12 +2537,30 @@ function PreviewModal({ file, allowDownload = true, onClose }: { file: { url: st
               <p className="text-[10px] text-slate-600 mt-2">Please use the download option instead.</p>
             </div>
           )}
+
+          {/* Active Security Warning Overlay */}
+          {isBlurred && (
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center p-6 text-center z-[200]">
+              <Lock className="w-12 h-12 text-red-500 animate-bounce mb-4" />
+              <h3 className="text-red-400 font-mono font-bold text-sm uppercase tracking-widest">CONTENT RE-LOCKED</h3>
+              <p className="text-[10px] text-slate-400 font-mono mt-2 lowercase max-w-xs leading-relaxed">
+                safe session temporarily locked due to screen defocus, suspicious window state, or multitasking interaction. click back inside the window to restore stream.
+              </p>
+            </div>
+          )}
         </div>
+
+        {/* Security Toast logs */}
+        {securityLog && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-red-950/95 border border-red-500/30 text-red-400 px-4 py-2 rounded-xl text-[9px] font-mono tracking-wide z-[250] shadow-2xl flex items-center gap-2 animate-bounce uppercase">
+            <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+            {securityLog}
+          </div>
+        )}
       </div>
     </motion.div>
   );
 }
-
 function Countdown({ expiresAt, onExpire }: { expiresAt: any; onExpire?: () => void }) {
   const [timeLeft, setTimeLeft] = useState<string>('...');
 

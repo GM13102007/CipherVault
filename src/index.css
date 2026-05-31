@@ -147,3 +147,26 @@ body {
   @apply shadow-[0_0_15px_rgba(59,130,246,0.2)];
 }
 
+/* Screen Capture & Printing Blocker Protection Rules */
+@media print {
+  body, html, #root {
+    display: none !important;
+    background: #000000 !important;
+    color: #000000 !important;
+    opacity: 0 !important;
+  }
+}
+
+/* User selection blocker to prevent manual text crawling or element grabbing */
+.select-none, [style*="user-select: none"] {
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
+}
+
+/* Make watermarks impossible to drag, grab, or hide in inspecting layout */
+.pointer-events-none {
+  pointer-events: none !important;
+}
+

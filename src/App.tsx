@@ -1217,11 +1217,23 @@ function MessageModal({ text, sender, onClose }: { text: string; sender?: string
       }
     };
 
+    const handleMouseLeave = () => {
+      setIsBlurred(true);
+      setSecurityLog("Security protocol: mouse exited screen container.");
+    };
+
+    const handleMouseEnter = () => {
+      setIsBlurred(false);
+      setSecurityLog(null);
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mouseleave', handleMouseLeave);
+    document.addEventListener('mouseenter', handleMouseEnter);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -1229,6 +1241,8 @@ function MessageModal({ text, sender, onClose }: { text: string; sender?: string
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('contextmenu', handleContextMenu);
       window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mouseleave', handleMouseLeave);
+      document.removeEventListener('mouseenter', handleMouseEnter);
     };
   }, []);
 
@@ -2374,11 +2388,23 @@ function PreviewModal({ file, allowDownload = true, onClose }: { file: { url: st
       }
     };
 
+    const handleMouseLeave = () => {
+      setIsBlurred(true);
+      setSecurityLog("Security protocol: mouse exited screen container.");
+    };
+
+    const handleMouseEnter = () => {
+      setIsBlurred(false);
+      setSecurityLog(null);
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mouseleave', handleMouseLeave);
+    document.addEventListener('mouseenter', handleMouseEnter);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -2386,6 +2412,8 @@ function PreviewModal({ file, allowDownload = true, onClose }: { file: { url: st
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('contextmenu', handleContextMenu);
       window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mouseleave', handleMouseLeave);
+      document.removeEventListener('mouseenter', handleMouseEnter);
     };
   }, []);
 
@@ -2899,6 +2927,90 @@ export default function App() {
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(Date.now()), 10000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Proactive Netlify Deployment Sync & Automatic Cache Buster
+  useEffect(() => {
+    let isActive = true;
+    const checkDeploymentUpdates = async () => {
+      try {
+        // Fetch fresh index.html directly from root with cache-busting timestamp to bypass CDN or browser caches
+        const res = await fetch(`/?_cb=${Date.now()}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const freshHtml = await res.text();
+        
+        // Extract any script tag src targets from the freshly loaded HTML
+        const scriptSrcRegex = /src="([^"]+)"/g;
+        const discoveredScripts: string[] = [];
+        let scriptMatch;
+        while ((scriptMatch = scriptSrcRegex.exec(freshHtml)) !== null) {
+          const srcUrl = scriptMatch[1];
+          // We track compiled JS files (either Vite defaults or bundle assets)
+          if (srcUrl.includes('/assets/') || srcUrl.includes('index-') || srcUrl.includes('main.')) {
+            discoveredScripts.push(srcUrl);
+          }
+        }
+
+        if (discoveredScripts.length === 0) return;
+
+        // Get script src targets currently instantiated in the loaded page DOM
+        const activeDOMScripts = Array.from(document.querySelectorAll('script'))
+          .map(tag => tag.getAttribute('src') || '')
+          .filter(srcUrl => srcUrl.includes('/assets/') || srcUrl.includes('index-') || srcUrl.includes('main.'));
+
+        if (activeDOMScripts.length > 0) {
+          // If the fresh index.html references a different script hash, a new build was deployed!
+          const isOutOfSync = discoveredScripts.some(s => !activeDOMScripts.includes(s));
+          if (isOutOfSync && isActive) {
+            console.log("🚀 CipherVault: New Deployment Detected on Netlify! Synchronizing cache...");
+            
+            // Unregister any active service workers to clean pipeline
+            if ('serviceWorker' in navigator) {
+              try {
+                const regs = await navigator.serviceWorker.getRegistrations();
+                for (const reg of regs) {
+                  await reg.unregister();
+                }
+               } catch (swErr) {
+                 console.warn("SW cleanup bypassed:", swErr);
+               }
+            }
+
+            // Delete cache storage assets programmatically
+            if ('caches' in window) {
+              try {
+                const cacheKeys = await caches.keys();
+                for (const ck of cacheKeys) {
+                  await caches.delete(ck);
+                }
+              } catch (cacheErr) {
+                console.warn("Cache cleanup bypassed:", cacheErr);
+              }
+            }
+
+            // Force clear cookies/storage caches where possible, then reload
+            window.location.reload();
+          }
+        }
+      } catch (e) {
+        console.warn("Sync update check skipped:", e);
+      }
+    };
+
+    // Run check immediately on load
+    checkDeploymentUpdates();
+
+    // Check every time user focuses/returns to tab
+    window.addEventListener('focus', checkDeploymentUpdates);
+
+    // Check periodically every 30 seconds
+    const pollTimer = setInterval(checkDeploymentUpdates, 30000);
+
+    return () => {
+      isActive = false;
+      window.removeEventListener('focus', checkDeploymentUpdates);
+      clearInterval(pollTimer);
+    };
   }, []);
 
   useEffect(() => {

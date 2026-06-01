@@ -92,7 +92,7 @@ import {
   getDocFromServer
 } from 'firebase/firestore';
 import { auth, db, signInAll, signOutAll, signInAnonymous } from './firebase';
-import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, getRedirectResult } from 'firebase/auth';
 import { encryptData, decryptData, arrayBufferToBase64, base64ToArrayBuffer, generateId } from './lib/crypto';
 import { handleFirestoreError, OperationType } from './lib/errorHandlers';
 import JSZip from 'jszip';
@@ -3245,6 +3245,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          console.log("CipherVault: Redirect sign-in success!", result.user);
+        }
+      })
+      .catch((err: any) => {
+        console.error("CipherVault: Redirect sign-in error", err);
+        if (err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized-domain')) {
+          setError(`Firebase Auth Domain Error: "${window.location.hostname}" is NOT authorized in your Firebase console. Please go to your Firebase Console -> Authentication -> Settings -> Authorized Domains and add "${window.location.hostname}" to the authorized domains to allow sign-ins!`);
+        } else {
+          setError(`Google Redirect Login failed: ${err.message}. If the popup blocker is the issue, please try Guest login or enable this domain in Firebase settings.`);
+        }
+      });
+  }, []);
+
+  useEffect(() => {
     // Handle incoming share links
     // Format: /#share={id}&key={key}
     const handleHash = () => {
@@ -5511,6 +5528,20 @@ export default function App() {
                          </div>
                        )}
                        
+                       {!user ? (
+                         <div className="space-y-3 w-full mb-3">
+                           {error && (
+                             <div className="p-3.5 bg-red-500/15 border border-red-500/20 rounded-xl text-left">
+                               <p className="text-[10px] font-mono font-bold text-red-400 uppercase tracking-widest mb-1 flex items-center gap-1.5">
+                                 <AlertCircle className="w-3.5 h-3.5" /> Authentication Alert
+                               </p>
+                               <p className="text-[9px] font-mono text-slate-300 lowercase leading-relaxed">
+                                 {error}
+                               </p>
+                             </div>
+                           )}
+                         </div>
+                       ) : null}
                        {!user ? (
                          <div className="space-y-3 w-full">
                            <button 

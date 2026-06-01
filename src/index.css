@@ -170,3 +170,45 @@ body {
   pointer-events: none !important;
 }
 
+@keyframes secureMoire {
+  0% { transform: translateY(-2%) scale(1.01); opacity: 0.16; }
+  50% { transform: translateY(2%) scale(0.99); opacity: 0.28; }
+  100% { transform: translateY(-2%) scale(1.01); opacity: 0.16; }
+}
+
+@keyframes laserSweep {
+  0% { top: 0%; opacity: 0.3; }
+  50% { opacity: 0.8; }
+  100% { top: 100%; opacity: 0.3; }
+}
+
+.secure-scanning-grid {
+  background: 
+    repeating-linear-gradient(
+      0deg,
+      rgba(59, 130, 246, 0.18) 0px,
+      rgba(59, 130, 246, 0.18) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(239, 68, 68, 0.18) 0px,
+      rgba(239, 68, 68, 0.18) 1.5px,
+      transparent 1.5px,
+      transparent 4px
+    );
+  background-size: 8px 8px;
+  animation: secureMoire 0.8s ease-in-out infinite;
+  pointer-events: none !important;
+  user-select: none !important;
+}
+
+.optical-sweep-bar {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ef4444, #3b82f6, #ef4444, transparent);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.8), 0 0 4px rgba(239, 68, 68, 0.8);
+  animation: laserSweep 4s linear infinite;
+  pointer-events: none !important;
+}
+

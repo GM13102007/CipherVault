@@ -16,24 +16,31 @@ export const db = initializeFirestore(app, {
 export const googleProvider = new GoogleAuthProvider();
 
 export const signInAll = async () => {
-  // Check if we are on a mobile device or if popup blocker might trigger
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   const isIframe = window.self !== window.top;
 
-  if (isMobile || isIframe) {
+  // Inside iframe, standard popups can't communicate with parents, so force redirect
+  if (isIframe) {
     try {
       return await signInWithRedirect(auth, googleProvider);
     } catch (redirectErr) {
-      console.warn("Redirect sign in failed, trying popup", redirectErr);
+      console.warn("Iframe redirect sign in failed", redirectErr);
     }
   }
 
   try {
+    // 1. Try popup first (works perfectly on mobile Chrome/Safari when clicked by user, and preserves session context)
     return await signInWithPopup(auth, googleProvider);
   } catch (err: any) {
-    // Fallback to Redirect if popup is blocked
-    if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
-      console.log("Popup blocked or cancelled, falling back to redirect login...");
+    console.warn("Popup authentication failed, attempting fallback...", err.code || err.message);
+    
+    // 2. Fall back to redirect only if popup is blocked or explicitly disallowed
+    if (
+      err.code === 'auth/popup-blocked' || 
+      err.code === 'auth/cancelled-popup-request' || 
+      err.code === 'auth/popup-closed-by-user' ||
+      err.message?.includes('popup')
+    ) {
+      console.log("Popup blocked or closed, invoking redirect fallback...");
       return await signInWithRedirect(auth, googleProvider);
     }
     throw err;

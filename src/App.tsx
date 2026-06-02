@@ -918,6 +918,8 @@ function CustomVideoPlayer({ url, name }: { url: string; name: string }) {
     }
   };
 
+  const userTraceID = auth.currentUser?.email || auth.currentUser?.uid || "GUEST_USER";
+
   return (
     <div
       ref={containerRef}
@@ -925,7 +927,7 @@ function CustomVideoPlayer({ url, name }: { url: string; name: string }) {
       onTouchStart={resetControlsTimer}
       onMouseLeave={() => isPlaying && setShowControls(false)}
       onContextMenu={(e) => e.preventDefault()}
-      className="relative w-full h-full min-h-[40vh] md:min-h-[50vh] overflow-hidden bg-[#020203] transition-all duration-300 rounded-xl border border-white/5 flex flex-col justify-center items-center select-none group/player"
+      className="relative w-full h-full min-h-[40vh] md:min-h-[50vh] overflow-hidden bg-[#020203] transition-all duration-300 rounded-xl border border-white/5 flex flex-col justify-center items-center select-none group/player no-scrollbar"
     >
       <video
         ref={videoRef}
@@ -940,19 +942,35 @@ function CustomVideoPlayer({ url, name }: { url: string; name: string }) {
         disableRemotePlayback
       />
 
+      {/* Anti-Screen Capture Scanning Layers (Over video visual field) */}
+      <div className="absolute inset-0 secure-scanning-grid z-10 pointer-events-none" />
+      <div className="absolute inset-x-0 optical-sweep-bar z-15 pointer-events-none" />
+      
+      {/* Dynamic Repeating Micro-Watermark Overlay for Traceability */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-20 opacity-[0.035] grid grid-cols-3 sm:grid-cols-4 gap-x-12 gap-y-16 p-6 font-mono text-[9px] uppercase font-black text-white tracking-widest">
+        {Array.from({ length: 24 }).map((_, i) => (
+          <div
+            key={i}
+            className="rotate-[-28deg] whitespace-nowrap text-center select-none"
+          >
+            E2EE SAFE VIEW • {userTraceID}
+          </div>
+        ))}
+      </div>
+
       <div
         className={`absolute inset-0 bg-gradient-to-t from-black/80 via-black/0 to-black/30 transition-opacity duration-300 pointer-events-none z-10 ${showControls ? "opacity-100" : "opacity-0"}`}
       />
 
       <div
-        className={`absolute top-4 left-4 text-xs font-mono text-white/80 bg-black/60 px-3 py-1.5 rounded-lg border border-white/10 transition-opacity duration-300 pointer-events-none truncate max-w-[80%] flex items-center gap-2 z-20 ${showControls ? "opacity-100" : "opacity-0"}`}
+        className={`absolute top-4 left-4 text-xs font-mono text-white/80 bg-black/60 px-3 py-1.5 rounded-lg border border-white/10 transition-opacity duration-300 pointer-events-none truncate max-w-[80%] flex items-center gap-2 z-40 ${showControls ? "opacity-100" : "opacity-0"}`}
       >
         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
         {name}
       </div>
 
       <div
-        className={`absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black via-black/90 to-[#020203]/0 transition-opacity duration-300 flex flex-col gap-3 z-30 ${showControls ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
+        className={`absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black via-black/90 to-[#020203]/0 transition-opacity duration-300 flex flex-col gap-3 z-40 ${showControls ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
       >
         <div className="w-full flex items-center gap-2 pointer-events-auto">
           <input
@@ -1182,11 +1200,13 @@ function CustomImageViewer({ url, name }: { url: string; name: string }) {
     touchStartDistRef.current = null;
   };
 
+  const userTraceID = auth.currentUser?.email || auth.currentUser?.uid || "GUEST_USER";
+
   return (
     <div
       ref={containerRef}
       onContextMenu={(e) => e.preventDefault()}
-      className="relative w-full h-full min-h-[40vh] bg-[#07080a] border border-white/5 rounded-2xl overflow-hidden flex flex-col select-none"
+      className="relative w-full h-full min-h-[40vh] bg-[#07080a] border border-white/5 rounded-2xl overflow-hidden flex flex-col select-none no-scrollbar"
     >
       <div
         onMouseDown={handleMouseDown}
@@ -1199,6 +1219,22 @@ function CustomImageViewer({ url, name }: { url: string; name: string }) {
         onContextMenu={(e) => e.preventDefault()}
         className={`flex-1 relative flex items-center justify-center p-4 sm:p-8 overflow-hidden bg-black/40 ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
       >
+        {/* Anti-Screen Capture Scanning Matrix Pattern (Deters camera photography) */}
+        <div className="absolute inset-0 secure-scanning-grid z-10 pointer-events-none" />
+        <div className="absolute inset-x-0 optical-sweep-bar z-15 pointer-events-none" />
+        
+        {/* Dynamic Repeating Micro-Watermark Overlay for Traceability */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-20 opacity-[0.035] grid grid-cols-3 sm:grid-cols-4 gap-x-12 gap-y-16 p-6 font-mono text-[9px] uppercase font-black text-white tracking-widest">
+          {Array.from({ length: 24 }).map((_, i) => (
+            <div
+              key={i}
+              className="rotate-[-28deg] whitespace-nowrap text-center select-none"
+            >
+              E2EE SAFE VIEW • {userTraceID}
+            </div>
+          ))}
+        </div>
+
         <div
           style={{
             transform: `translate(${position.x}px, ${position.y}px) scale(${scale}) rotate(${rotation}deg)`,
@@ -1219,7 +1255,7 @@ function CustomImageViewer({ url, name }: { url: string; name: string }) {
         </div>
       </div>
 
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/85 backdrop-blur-md border border-white/10 px-3 py-1.5 sm:px-4 sm:py-2 rounded-2xl flex items-center justify-center gap-3 sm:gap-4 text-white z-20 shadow-xl">
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/85 backdrop-blur-md border border-white/10 px-3 py-1.5 sm:px-4 sm:py-2 rounded-2xl flex items-center justify-center gap-3 sm:gap-4 text-white z-40 shadow-xl pointer-events-auto">
         <button
           type="button"
           onClick={handleZoomOut}
@@ -2685,7 +2721,15 @@ function PreviewModal({
 
   useEffect(() => {
     setFileStack([file]);
+
+    // Prevent background page body/iframe scrolling when secure modal is open
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
     return () => {
+      // Restore normal background scrolling when secure modal is closed
+      document.body.style.overflow = prevOverflow;
+
       // Cleanup all dynamically generated URLs on unmount
       createdUrlsRef.current.forEach((url) => {
         if (url.startsWith("blob:")) {
@@ -2890,10 +2934,10 @@ function PreviewModal({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[300] flex items-center justify-center p-2 sm:p-4 bg-black/98 backdrop-blur-md select-none"
+      className="fixed inset-0 z-[300] flex items-center justify-center p-2 sm:p-4 bg-black/98 backdrop-blur-md select-none no-scrollbar"
       style={{ userSelect: "none", WebkitUserSelect: "none" }}
     >
-      <div className="relative w-full max-w-4xl h-[85vh] md:h-[88vh] bg-[#0a0b0d] rounded-2xl border border-red-500/10 overflow-hidden flex flex-col technical-border shadow-2xl">
+      <div className="relative w-full max-w-4xl h-[85vh] md:h-[88vh] bg-[#0a0b0d] rounded-2xl border border-red-500/10 overflow-hidden flex flex-col technical-border shadow-2xl no-scrollbar">
         {/* Anti-Screen Recording/Screenshot Active Warning Ribbon */}
         <div className="bg-red-500/10 border-b border-red-500/10 px-4 py-1.5 flex items-center justify-between text-[8px] font-mono select-none">
           <span className="text-red-400 font-bold uppercase tracking-widest flex items-center gap-1.5 animate-pulse">
@@ -2955,27 +2999,11 @@ function PreviewModal({
 
         {/* Media Preview Stage */}
         <div
-          className={`flex-1 w-full min-h-0 bg-[#050608] flex items-center justify-center overflow-hidden p-2 sm:p-4 relative transition-all duration-300
+          className={`flex-1 w-full min-h-0 bg-[#050608] flex items-center justify-center overflow-hidden p-2 sm:p-4 relative transition-all duration-300 no-scrollbar
             ${isBlurred ? "blur-2xl scale-95 pointer-events-none" : ""}
           `}
           onDragStart={(e) => e.preventDefault()}
         >
-          {/* Anti-Screen Capture Scanning Matrix Pattern (Moire pattern disruption) */}
-          <div className="absolute inset-0 secure-scanning-grid z-30 pointer-events-none" />
-          <div className="absolute inset-x-0 optical-sweep-bar z-35 pointer-events-none" />
-
-          {/* Dynamic Repeating Micro-Watermark Overlay for Traceability */}
-          <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-50 opacity-[0.035] grid grid-cols-3 sm:grid-cols-4 gap-x-12 gap-y-16 p-6 font-mono text-[9px] uppercase font-black text-white tracking-widest">
-            {Array.from({ length: 40 }).map((_, i) => (
-              <div
-                key={i}
-                className="rotate-[-28deg] whitespace-nowrap text-center select-none"
-              >
-                E2EE SAFE VIEW • {userTraceID} • NO_LOGS
-              </div>
-            ))}
-          </div>
-
           {/* Actual Media Components */}
           {isImage ? (
             <div className="w-full h-full pointer-events-auto select-none">
@@ -3216,6 +3244,78 @@ function ProcessingOverlay({
 
 // --- Components ---
 
+// Heuristic to detect if running in an Android APK or WebView wrapper environment
+function isApkEnvironment(): boolean {
+  if (typeof window === "undefined" || !navigator) return false;
+  const ua = navigator.userAgent || "";
+  
+  // Standard Android WebView tokens
+  const isAndroidWebView = /; wv\)/i.test(ua) || (/Android/i.test(ua) && /Version\/[0-9.]+/i.test(ua));
+  // iOS WebView tokens (lacks standalone Safari keyword inside apps)
+  const isIosWebView = /iPhone|iPad|iPod/i.test(ua) && !/Safari/i.test(ua) && !(navigator as any).standalone;
+  // Cordova / Capacitor wrapper check
+  const hasCapacitor = !!(window as any).Capacitor;
+  const hasCordova = !!(window as any).Cordova || !!(window as any).cordova;
+  // PWA/Standalone app mode
+  const isStandaloneApp = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true;
+  // Specific local protocol / local host scheme indicators representing wrapped clients
+  const hasWebViewFlags = window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && /Android|iPhone|iPad/i.test(ua) && !/Safari|Chrome/i.test(ua));
+
+  return !!(isAndroidWebView || isIosWebView || hasCapacitor || hasCordova || isStandaloneApp || hasWebViewFlags);
+}
+
+// Heuristic to detect Private / Incognito Browsing Mode across modern browsers
+async function detectIncognito(): Promise<boolean> {
+  try {
+    // Inside a native APK / Android wrapper, screenshot/screen sharing protections 
+    // are enforced natively at the application level, so we don't force private/incognito.
+    if (isApkEnvironment()) {
+      return true;
+    }
+
+    // 1. Firefox Private Mode detection via lack of serviceWorker
+    if (navigator.userAgent.includes("Firefox")) {
+      return !navigator.serviceWorker;
+    }
+
+    // 2. Safari Private Mode detection
+    const isSafari = navigator.userAgent.includes("Safari") && !navigator.userAgent.includes("Chrome");
+    if (isSafari) {
+      if ('storage' in navigator && 'estimate' in navigator.storage) {
+        const { quota } = await navigator.storage.estimate();
+        // Safari 17+ Private mode dramatically curtails storage quota (< 50MB)
+        if (quota && quota < 50 * 1024 * 1024) return true;
+      }
+      try {
+        // Older Safari WebSQL workaround
+        (window as any).openDatabase(null, null, null, null);
+      } catch (_) {
+        return true;
+      }
+    }
+
+    // 3. Chrome / Chromium-based Private Mode detection (Brave, Edge, Opera, Chrome)
+    const isChrome = navigator.userAgent.includes("Chrome") || 
+                     ((navigator as any).userAgentData?.brands?.some((b: any) => b.brand === "Google Chrome"));
+    if (isChrome) {
+      if ('storage' in navigator && 'estimate' in navigator.storage) {
+        const { quota } = await navigator.storage.estimate();
+        // Chrome restricts the storage quota of Incognito tabs greatly (typically <= 120MB)
+        if (quota && quota < 120 * 1024 * 1024) return true;
+      }
+    }
+
+    // 4. Generic Check based on Storage Limits
+    if ('storage' in navigator && 'estimate' in navigator.storage) {
+      const { quota } = await navigator.storage.estimate();
+      if (quota && quota < 100 * 1024 * 1024) return true;
+    }
+  } catch (e) {
+    console.warn("CipherVault: Incognito check failed or threw:", e);
+  }
+  return false;
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -3232,6 +3332,19 @@ export default function App() {
   const [theme, setTheme] = useState<"dark" | "light" | "system">(() => {
     return (localStorage.getItem("vault_theme") as any) || "system";
   });
+
+  const [isPrivateBrowsing, setIsPrivateBrowsing] = useState<boolean | null>(null);
+  const [bypassIncognito, setBypassIncognito] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  // Automatically trigger Incognito check on initialization
+  useEffect(() => {
+    async function runCheck() {
+      const isIncognito = await detectIncognito();
+      setIsPrivateBrowsing(isIncognito);
+    }
+    runCheck();
+  }, [view]);
 
   // User Profile & Social
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -5251,50 +5364,113 @@ export default function App() {
                           })()}
                         </div>
 
-                        {(() => {
-                          const isViewAllowed = targetShare.allowView !== false;
-                          const isDownloadAllowed =
-                            targetShare.allowDownload !== false;
-                          return (
-                            <div
-                              className={`grid gap-3 ${isViewAllowed && isDownloadAllowed ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}
-                            >
-                              {isDownloadAllowed && (
-                                <button
-                                  disabled={isDecrypting}
-                                  onClick={handleDownload}
-                                  className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
-                              ${isDecrypting ? "shadow-[0_0_30px_rgba(59,130,246,0.4)]" : "shadow-lg shadow-blue-500/10"}
-                            `}
-                                >
-                                  {isDecrypting ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : (
-                                    <Download className="w-3 h-3" />
-                                  )}
-                                  Decrypt & Download
-                                </button>
-                              )}
-
-                              {isViewAllowed && (
-                                <button
-                                  disabled={isDecrypting}
-                                  onClick={handlePreview}
-                                  className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
-                              ${isDecrypting ? "shadow-[0_0_30px_rgba(59,130,246,0.4)]" : "shadow-lg shadow-blue-500/20"}
-                            `}
-                                >
-                                  {isDecrypting ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : (
-                                    <Eye className="w-3 h-3" />
-                                  )}
-                                  Decrypt & View
-                                </button>
-                              )}
+                        {!isPrivateBrowsing ? (
+                          <div className="p-5 rounded-xl border border-rose-500/20 bg-rose-500/5 space-y-4 font-sans text-left relative overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-br from-rose-500/5 via-transparent to-transparent pointer-events-none" />
+                            <div className="flex items-start gap-3 relative z-10">
+                              <div className="p-2 rounded-lg bg-rose-500/10 text-rose-500 shrink-0 mt-0.5">
+                                <ShieldAlert className="w-5 h-5 animate-pulse" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h3 className="text-xs font-mono font-black text-rose-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                                  <span>PRIVATE TAB REQUIRED</span>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                                </h3>
+                                <p className="text-[11px] text-zinc-300 leading-relaxed font-mono">
+                                  For E2EE handshake protection, this secure share demands execution inside an <strong className="text-rose-300">Incognito or Private Browsing window</strong>.
+                                </p>
+                              </div>
                             </div>
-                          );
-                        })()}
+
+                            <div className="p-3 bg-black/40 rounded-lg border border-white/5 space-y-2 text-[10px] font-mono text-zinc-400 leading-normal relative z-10">
+                              <p className="font-bold text-zinc-300 tracking-wider uppercase text-[8px] text-rose-400">
+                                Global Safety Protocol Information
+                              </p>
+                              <ul className="list-disc pl-4 space-y-1">
+                                <li>
+                                  <strong className="text-zinc-200">System Screenshots Blocked:</strong> Mobile browsers natively prevent page screenshots and screen recordings in Private tabs.
+                                </li>
+                                <li>
+                                  <strong className="text-zinc-200">No Cache Footprints:</strong> Inhibits persistent storage logs or telemetry leakage of locally decrypted file streams.
+                                </li>
+                              </ul>
+                            </div>
+
+                            <div className="flex flex-col gap-2 pt-2 relative z-10">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const url = window.location.href;
+                                  navigator.clipboard.writeText(url);
+                                  setCopiedLink(true);
+                                  setTimeout(() => setCopiedLink(false), 2000);
+                                }}
+                                className="w-full py-3 bg-rose-500/10 hover:bg-rose-500/20 active:scale-[0.98] transition-all text-rose-400 rounded-lg font-mono font-bold text-[10px] uppercase tracking-wider border border-rose-500/20 flex items-center justify-center gap-2"
+                              >
+                                {copiedLink ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span>Secure Handshake Copied!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>Copy Secure Link</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <div className="flex items-center justify-center text-[9px] font-mono text-zinc-500 pt-2 border-t border-white/5">
+                                <span>Running in standard view mode</span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          (() => {
+                            const isViewAllowed = targetShare.allowView !== false;
+                            const isDownloadAllowed =
+                              targetShare.allowDownload !== false;
+                            return (
+                              <div
+                                className={`grid gap-3 ${isViewAllowed && isDownloadAllowed ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}
+                              >
+                                {isDownloadAllowed && (
+                                  <button
+                                    disabled={isDecrypting}
+                                    onClick={handleDownload}
+                                    className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
+                                ${isDecrypting ? "shadow-[0_0_30px_rgba(59,130,246,0.4)]" : "shadow-lg shadow-blue-500/10"}
+                              `}
+                                  >
+                                    {isDecrypting ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Download className="w-3 h-3" />
+                                    )}
+                                    Decrypt & Download
+                                  </button>
+                                )}
+
+                                {isViewAllowed && (
+                                  <button
+                                    disabled={isDecrypting}
+                                    onClick={handlePreview}
+                                    className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
+                                ${isDecrypting ? "shadow-[0_0_30px_rgba(59,130,246,0.4)]" : "shadow-lg shadow-blue-500/20"}
+                              `}
+                                  >
+                                    {isDecrypting ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Eye className="w-3 h-3" />
+                                    )}
+                                    Decrypt & View
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()
+                        )}
 
                         <div className="p-4 bg-blue-500/5 rounded-lg border border-blue-500/10 flex items-start gap-3">
                           <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />

@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import { detectIncognito as detectIncognitoNpm } from "detect-incognito";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Shield,
@@ -3273,45 +3274,52 @@ async function detectIncognito(): Promise<boolean> {
       return true;
     }
 
-    // 1. Firefox Private Mode detection via lack of serviceWorker
-    if (navigator.userAgent.includes("Firefox")) {
-      return !navigator.serviceWorker;
-    }
-
-    // 2. Safari Private Mode detection
-    const isSafari = navigator.userAgent.includes("Safari") && !navigator.userAgent.includes("Chrome");
-    if (isSafari) {
-      if ('storage' in navigator && 'estimate' in navigator.storage) {
-        const { quota } = await navigator.storage.estimate();
-        // Safari 17+ Private mode dramatically curtails storage quota (< 50MB)
-        if (quota && quota < 50 * 1024 * 1024) return true;
-      }
-      try {
-        // Older Safari WebSQL workaround
-        (window as any).openDatabase(null, null, null, null);
-      } catch (_) {
-        return true;
-      }
-    }
-
-    // 3. Chrome / Chromium-based Private Mode detection (Brave, Edge, Opera, Chrome)
-    const isChrome = navigator.userAgent.includes("Chrome") || 
-                     ((navigator as any).userAgentData?.brands?.some((b: any) => b.brand === "Google Chrome"));
-    if (isChrome) {
-      if ('storage' in navigator && 'estimate' in navigator.storage) {
-        const { quota } = await navigator.storage.estimate();
-        // Chrome restricts the storage quota of Incognito tabs greatly (typically <= 120MB)
-        if (quota && quota < 120 * 1024 * 1024) return true;
-      }
-    }
-
-    // 4. Generic Check based on Storage Limits
-    if ('storage' in navigator && 'estimate' in navigator.storage) {
-      const { quota } = await navigator.storage.estimate();
-      if (quota && quota < 100 * 1024 * 1024) return true;
-    }
+    const result = await detectIncognitoNpm();
+    return result.isPrivate;
   } catch (e) {
-    console.warn("CipherVault: Incognito check failed or threw:", e);
+    console.warn("CipherVault: Npm incognito check failed or threw, falling back to local heuristic:", e);
+    // Local fallback heuristics if npm package fails
+    try {
+      // 1. Firefox Private Mode detection via lack of serviceWorker
+      if (navigator.userAgent.includes("Firefox")) {
+        return !navigator.serviceWorker;
+      }
+
+      // 2. Safari Private Mode detection
+      const isSafari = navigator.userAgent.includes("Safari") && !navigator.userAgent.includes("Chrome");
+      if (isSafari) {
+        if ('storage' in navigator && 'estimate' in navigator.storage) {
+          const { quota } = await navigator.storage.estimate();
+          // Safari 17+ Private mode dramatically curtails storage quota (< 50MB)
+          if (quota && quota < 50 * 1024 * 1024) return true;
+        }
+        try {
+          // Older Safari WebSQL workaround
+          (window as any).openDatabase(null, null, null, null);
+        } catch (_) {
+          return true;
+        }
+      }
+
+      // 3. Chrome / Chromium-based Private Mode detection (Brave, Edge, Opera, Chrome)
+      const isChrome = navigator.userAgent.includes("Chrome") || 
+                       ((navigator as any).userAgentData?.brands?.some((b: any) => b.brand === "Google Chrome"));
+      if (isChrome) {
+        if ('storage' in navigator && 'estimate' in navigator.storage) {
+          const { quota } = await navigator.storage.estimate();
+          // Chrome restricts the storage quota of Incognito tabs greatly (typically <= 120MB)
+          if (quota && quota < 120 * 1024 * 1024) return true;
+        }
+      }
+
+      // 4. Generic Check based on Storage Limits
+      if ('storage' in navigator && 'estimate' in navigator.storage) {
+        const { quota } = await navigator.storage.estimate();
+        if (quota && quota < 100 * 1024 * 1024) return true;
+      }
+    } catch (fallbackErr) {
+      console.warn("Fallback incognito check failed:", fallbackErr);
+    }
   }
   return false;
 }

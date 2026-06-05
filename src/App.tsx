@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { detectIncognito as detectIncognitoNpm } from "detect-incognito";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Shield,
@@ -3245,85 +3244,6 @@ function ProcessingOverlay({
 
 // --- Components ---
 
-// Heuristic to detect if running in an Android APK or WebView wrapper environment
-function isApkEnvironment(): boolean {
-  if (typeof window === "undefined" || !navigator) return false;
-  const ua = navigator.userAgent || "";
-  
-  // Standard Android WebView tokens
-  const isAndroidWebView = /; wv\)/i.test(ua) || (/Android/i.test(ua) && /Version\/[0-9.]+/i.test(ua));
-  // iOS WebView tokens (lacks standalone Safari keyword inside apps)
-  const isIosWebView = /iPhone|iPad|iPod/i.test(ua) && !/Safari/i.test(ua) && !(navigator as any).standalone;
-  // Cordova / Capacitor wrapper check
-  const hasCapacitor = !!(window as any).Capacitor;
-  const hasCordova = !!(window as any).Cordova || !!(window as any).cordova;
-  // PWA/Standalone app mode
-  const isStandaloneApp = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true;
-  // Specific local protocol / local host scheme indicators representing wrapped clients
-  const hasWebViewFlags = window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && /Android|iPhone|iPad/i.test(ua) && !/Safari|Chrome/i.test(ua));
-
-  return !!(isAndroidWebView || isIosWebView || hasCapacitor || hasCordova || isStandaloneApp || hasWebViewFlags);
-}
-
-// Heuristic to detect Private / Incognito Browsing Mode across modern browsers
-async function detectIncognito(): Promise<boolean> {
-  try {
-    // Inside a native APK / Android wrapper, screenshot/screen sharing protections 
-    // are enforced natively at the application level, so we don't force private/incognito.
-    if (isApkEnvironment()) {
-      return true;
-    }
-
-    const result = await detectIncognitoNpm();
-    return result.isPrivate;
-  } catch (e) {
-    console.warn("CipherVault: Npm incognito check failed or threw, falling back to local heuristic:", e);
-    // Local fallback heuristics if npm package fails
-    try {
-      // 1. Firefox Private Mode detection via lack of serviceWorker
-      if (navigator.userAgent.includes("Firefox")) {
-        return !navigator.serviceWorker;
-      }
-
-      // 2. Safari Private Mode detection
-      const isSafari = navigator.userAgent.includes("Safari") && !navigator.userAgent.includes("Chrome");
-      if (isSafari) {
-        if ('storage' in navigator && 'estimate' in navigator.storage) {
-          const { quota } = await navigator.storage.estimate();
-          // Safari 17+ Private mode dramatically curtails storage quota (< 50MB)
-          if (quota && quota < 50 * 1024 * 1024) return true;
-        }
-        try {
-          // Older Safari WebSQL workaround
-          (window as any).openDatabase(null, null, null, null);
-        } catch (_) {
-          return true;
-        }
-      }
-
-      // 3. Chrome / Chromium-based Private Mode detection (Brave, Edge, Opera, Chrome)
-      const isChrome = navigator.userAgent.includes("Chrome") || 
-                       ((navigator as any).userAgentData?.brands?.some((b: any) => b.brand === "Google Chrome"));
-      if (isChrome) {
-        if ('storage' in navigator && 'estimate' in navigator.storage) {
-          const { quota } = await navigator.storage.estimate();
-          // Chrome restricts the storage quota of Incognito tabs greatly (typically <= 120MB)
-          if (quota && quota < 120 * 1024 * 1024) return true;
-        }
-      }
-
-      // 4. Generic Check based on Storage Limits
-      if ('storage' in navigator && 'estimate' in navigator.storage) {
-        const { quota } = await navigator.storage.estimate();
-        if (quota && quota < 100 * 1024 * 1024) return true;
-      }
-    } catch (fallbackErr) {
-      console.warn("Fallback incognito check failed:", fallbackErr);
-    }
-  }
-  return false;
-}
-
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -3340,19 +3260,6 @@ export default function App() {
   const [theme, setTheme] = useState<"dark" | "light" | "system">(() => {
     return (localStorage.getItem("vault_theme") as any) || "system";
   });
-
-  const [isPrivateBrowsing, setIsPrivateBrowsing] = useState<boolean | null>(null);
-  const [bypassIncognito, setBypassIncognito] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
-
-  // Automatically trigger Incognito check on initialization
-  useEffect(() => {
-    async function runCheck() {
-      const isIncognito = await detectIncognito();
-      setIsPrivateBrowsing(isIncognito);
-    }
-    runCheck();
-  }, [view]);
 
   // User Profile & Social
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -5372,113 +5279,50 @@ export default function App() {
                           })()}
                         </div>
 
-                        {!isPrivateBrowsing ? (
-                          <div className="p-5 rounded-xl border border-rose-500/20 bg-rose-500/5 space-y-4 font-sans text-left relative overflow-hidden">
-                            <div className="absolute inset-0 bg-gradient-to-br from-rose-500/5 via-transparent to-transparent pointer-events-none" />
-                            <div className="flex items-start gap-3 relative z-10">
-                              <div className="p-2 rounded-lg bg-rose-500/10 text-rose-500 shrink-0 mt-0.5">
-                                <ShieldAlert className="w-5 h-5 animate-pulse" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <h3 className="text-xs font-mono font-black text-rose-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                                  <span>PRIVATE TAB REQUIRED</span>
-                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                                </h3>
-                                <p className="text-[11px] text-zinc-300 leading-relaxed font-mono">
-                                  For E2EE handshake protection, this secure share demands execution inside an <strong className="text-rose-300">Incognito or Private Browsing window</strong>.
-                                </p>
-                              </div>
+                        {(() => {
+                          const isViewAllowed = targetShare.allowView !== false;
+                          const isDownloadAllowed =
+                            targetShare.allowDownload !== false;
+                          return (
+                            <div
+                              className={`grid gap-3 ${isViewAllowed && isDownloadAllowed ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}
+                            >
+                              {isDownloadAllowed && (
+                                <button
+                                  disabled={isDecrypting}
+                                  onClick={handleDownload}
+                                  className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
+                              ${isDecrypting ? "shadow-[0_0_30px_rgba(59,130,246,0.4)]" : "shadow-lg shadow-blue-500/10"}
+                            `}
+                                >
+                                  {isDecrypting ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Download className="w-3 h-3" />
+                                  )}
+                                  Decrypt & Download
+                                </button>
+                              )}
+
+                              {isViewAllowed && (
+                                <button
+                                  disabled={isDecrypting}
+                                  onClick={handlePreview}
+                                  className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
+                              ${isDecrypting ? "shadow-[0_0_30px_rgba(59,130,246,0.4)]" : "shadow-lg shadow-blue-500/20"}
+                            `}
+                                >
+                                  {isDecrypting ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Eye className="w-3 h-3" />
+                                  )}
+                                  Decrypt & View
+                                </button>
+                              )}
                             </div>
-
-                            <div className="p-3 bg-black/40 rounded-lg border border-white/5 space-y-2 text-[10px] font-mono text-zinc-400 leading-normal relative z-10">
-                              <p className="font-bold text-zinc-300 tracking-wider uppercase text-[8px] text-rose-400">
-                                Global Safety Protocol Information
-                              </p>
-                              <ul className="list-disc pl-4 space-y-1">
-                                <li>
-                                  <strong className="text-zinc-200">System Screenshots Blocked:</strong> Mobile browsers natively prevent page screenshots and screen recordings in Private tabs.
-                                </li>
-                                <li>
-                                  <strong className="text-zinc-200">No Cache Footprints:</strong> Inhibits persistent storage logs or telemetry leakage of locally decrypted file streams.
-                                </li>
-                              </ul>
-                            </div>
-
-                            <div className="flex flex-col gap-2 pt-2 relative z-10">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const url = window.location.href;
-                                  navigator.clipboard.writeText(url);
-                                  setCopiedLink(true);
-                                  setTimeout(() => setCopiedLink(false), 2000);
-                                }}
-                                className="w-full py-3 bg-rose-500/10 hover:bg-rose-500/20 active:scale-[0.98] transition-all text-rose-400 rounded-lg font-mono font-bold text-[10px] uppercase tracking-wider border border-rose-500/20 flex items-center justify-center gap-2"
-                              >
-                                {copiedLink ? (
-                                  <>
-                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                    <span>Secure Handshake Copied!</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-3.5 h-3.5" />
-                                    <span>Copy Secure Link</span>
-                                  </>
-                                )}
-                              </button>
-
-                              <div className="flex items-center justify-center text-[9px] font-mono text-zinc-500 pt-2 border-t border-white/5">
-                                <span>Running in standard view mode</span>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          (() => {
-                            const isViewAllowed = targetShare.allowView !== false;
-                            const isDownloadAllowed =
-                              targetShare.allowDownload !== false;
-                            return (
-                              <div
-                                className={`grid gap-3 ${isViewAllowed && isDownloadAllowed ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}
-                              >
-                                {isDownloadAllowed && (
-                                  <button
-                                    disabled={isDecrypting}
-                                    onClick={handleDownload}
-                                    className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
-                                ${isDecrypting ? "shadow-[0_0_30px_rgba(59,130,246,0.4)]" : "shadow-lg shadow-blue-500/10"}
-                              `}
-                                  >
-                                    {isDecrypting ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                    ) : (
-                                      <Download className="w-3 h-3" />
-                                    )}
-                                    Decrypt & Download
-                                  </button>
-                                )}
-
-                                {isViewAllowed && (
-                                  <button
-                                    disabled={isDecrypting}
-                                    onClick={handlePreview}
-                                    className={`relative py-4 btn-primary rounded-lg font-mono font-bold uppercase tracking-wider text-[10px] flex items-center justify-center gap-2 active-glow disabled:opacity-50
-                                ${isDecrypting ? "shadow-[0_0_30px_rgba(59,130,246,0.4)]" : "shadow-lg shadow-blue-500/20"}
-                              `}
-                                  >
-                                    {isDecrypting ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                    ) : (
-                                      <Eye className="w-3 h-3" />
-                                    )}
-                                    Decrypt & View
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          })()
-                        )}
+                          );
+                        })()}
 
                         <div className="p-4 bg-blue-500/5 rounded-lg border border-blue-500/10 flex items-start gap-3">
                           <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />

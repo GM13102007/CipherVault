@@ -67,7 +67,9 @@ import {
   Minimize2,
   Mic,
   Square,
+  BookOpen,
 } from "lucide-react";
+import { UserManualModal } from "./components/UserManualModal";
 import {
   doc,
   setDoc,
@@ -3297,6 +3299,7 @@ export default function App() {
   }, []);
 
   // Home/Receive State
+  const [showUserManual, setShowUserManual] = useState(false);
   const [manualLink, setManualLink] = useState("");
   const [messageText, setMessageText] = useState("");
   const [isSendingMessage, setIsSendingMessage] = useState(false);
@@ -5148,8 +5151,8 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-blue-500/5 border border-blue-500/20 rounded-lg">
                 <div className="w-1.5 h-1.5 rounded-full bg-green-500 glow-green animate-pulse" />
                 <span className="text-[8px] font-mono font-black text-blue-400 uppercase tracking-widest">
                   System_Active
@@ -5479,6 +5482,34 @@ export default function App() {
                                   <p className="text-[10px] text-text-sub uppercase tracking-widest font-medium opacity-60">
                                     Select required operational mode
                                   </p>
+                                </div>
+                              </div>
+
+                              {/* User Manual Banner */}
+                              <div
+                                onClick={() => setShowUserManual(true)}
+                                className="mb-6 p-4 bg-gradient-to-r from-blue-950/80 via-slate-900 to-slate-950 border border-blue-500/30 hover:border-blue-500/60 rounded-2xl cursor-pointer transition-all shadow-lg group relative overflow-hidden text-left"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-3">
+                                    <div className="p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 group-hover:scale-105 transition-transform shrink-0">
+                                      <BookOpen className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                      <div className="flex items-center gap-2">
+                                        <h4 className="text-xs sm:text-sm font-mono font-bold text-white tracking-wide">
+                                          User Manual & Export PDF Guide
+                                        </h4>
+                                        <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded text-[8px] font-mono font-bold uppercase">
+                                          Beginner Friendly
+                                        </span>
+                                      </div>
+                                      <p className="text-[10px] text-slate-300 font-sans mt-0.5">
+                                        Complete step-by-step app usage instructions & downloadable PDF operations manual
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <ChevronRight className="w-4 h-4 text-blue-400 group-hover:translate-x-1 transition-transform shrink-0" />
                                 </div>
                               </div>
 
@@ -6947,6 +6978,10 @@ export default function App() {
 
       {/* Real-time Modals Group */}
       <AnimatePresence>
+        <UserManualModal
+          isOpen={showUserManual}
+          onClose={() => setShowUserManual(false)}
+        />
         {showPreview && decryptedFile && (
           <PreviewModal
             file={decryptedFile}
